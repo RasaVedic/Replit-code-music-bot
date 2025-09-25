@@ -117,11 +117,20 @@ async function playNext(guildId) {
             filter: 'audioonly',
             quality: 'highestaudio',
             highWaterMark: 1 << 25,
+            opusEncoded: false,
+            encoderArgs: ['-af', 'bass=g=2,dynaudnorm=f=200']
         });
 
         const resource = createAudioResource(stream, {
-            metadata: nextSong
+            metadata: nextSong,
+            inputType: 'webm/opus',
+            inlineVolume: true
         });
+
+        // Set initial volume
+        if (resource.volume) {
+            resource.volume.setVolume(queue.volume);
+        }
 
         player.play(resource);
     } catch (error) {

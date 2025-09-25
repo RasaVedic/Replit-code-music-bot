@@ -8,12 +8,19 @@ module.exports = {
 
     async execute(interaction) {
         const member = interaction.member;
-        const voiceChannel = member.voice.channel;
+        if (!member) {
+            return interaction.reply({ 
+                content: '❌ Member information not available. Please try again.',
+                flags: 64 // MessageFlags.Ephemeral
+            });
+        }
+        
+        const voiceChannel = member.voice?.channel;
 
         if (!voiceChannel) {
             return interaction.reply({ 
                 content: '❌ आपको पहले किसी voice channel में join करना होगा!', 
-                ephemeral: true 
+                flags: 64 // MessageFlags.Ephemeral
             });
         }
 
@@ -21,7 +28,7 @@ module.exports = {
         if (!permissions.has('Connect') || !permissions.has('Speak')) {
             return interaction.reply({ 
                 content: '❌ मुझे voice channel में जाने की permission नहीं है!', 
-                ephemeral: true 
+                flags: 64 // MessageFlags.Ephemeral
             });
         }
 
@@ -45,7 +52,7 @@ module.exports = {
             console.error('Voice connection error:', error);
             await interaction.reply({ 
                 content: '❌ Voice channel join करने में error हुई!', 
-                ephemeral: true 
+                flags: 64 // MessageFlags.Ephemeral
             });
         }
     },

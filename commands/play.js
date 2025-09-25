@@ -16,7 +16,11 @@ module.exports = {
         await interaction.deferReply();
 
         const member = interaction.member;
-        const voiceChannel = member.voice.channel;
+        if (!member) {
+            return interaction.editReply('❌ Member information not available. Please try again.');
+        }
+        
+        const voiceChannel = member.voice?.channel;
         const url = interaction.options.getString('url');
 
         if (!voiceChannel) {

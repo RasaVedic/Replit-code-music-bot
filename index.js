@@ -175,21 +175,85 @@ client.once('ready', async () => {
 });
 
 client.on('interactionCreate', async interaction => {
-    if (!interaction.isChatInputCommand()) return;
+    // Handle slash commands
+    if (interaction.isChatInputCommand()) {
+        const command = client.commands.get(interaction.commandName);
+        if (!command) return;
 
-    const command = client.commands.get(interaction.commandName);
-    if (!command) return;
-
-    try {
-        await command.execute(interaction);
-    } catch (error) {
-        console.error('Command execution error:', error);
-        const reply = { content: 'There was an error executing this command!', ephemeral: true };
+        try {
+            await command.execute(interaction);
+        } catch (error) {
+            console.error('Command execution error:', error);
+            const reply = { content: 'There was an error executing this command!', flags: 64 };
+            
+            if (interaction.replied || interaction.deferred) {
+                await interaction.followUp(reply);
+            } else {
+                await interaction.reply(reply);
+            }
+        }
+    }
+    
+    // Handle dropdown selections from search command
+    if (interaction.isStringSelectMenu() && interaction.customId === 'song_select') {
+        await interaction.deferReply();
         
-        if (interaction.replied || interaction.deferred) {
-            await interaction.followUp(reply);
-        } else {
-            await interaction.reply(reply);
+        const member = interaction.member;
+        const voiceChannel = member?.voice?.channel;
+        const videoUrl = interaction.values[0];
+
+        if (!voiceChannel) {
+            return interaction.editReply('❌ आपको पहले किसी voice channel में join करना होगा!');
+        }
+
+        try {
+            // Get video info
+            const info = await ytdl.getInfo(videoUrl);
+            const title = info.videoDetails.title;
+            const duration = parseInt(info.videoDetails.lengthSeconds);
+            const thumbnail = info.videoDetails.thumbnails[0]?.url;
+
+            const song = {
+                title,
+                url: videoUrl,
+                duration,
+                thumbnail,
+                requestedBy: interaction.user,
+            };
+
+            // Join voice channel if not already connected
+            let connection;
+            try {
+                connection = joinVoiceChannel({
+                    channelId: voiceChannel.id,
+                    guildId: interaction.guild.id,
+                    adapterCreator: interaction.guild.voiceAdapterCreator,
+                });
+            } catch (error) {
+                console.log('Already connected or connection exists');
+            }
+
+            const queue = getQueue(interaction.guild.id);
+            const player = createGuildAudioPlayer(interaction.guild.id);
+            
+            if (connection) {
+                connection.subscribe(player);
+            }
+
+            if (queue.nowPlaying) {
+                // Add to queue
+                queue.add(song);
+                return interaction.editReply(`📋 **${title}** को queue में add कर दिया! Position: ${queue.songs.length}`);
+            } else {
+                // Play immediately
+                queue.add(song);
+                playNext(interaction.guild.id);
+                return interaction.editReply(`🎵 अब play हो रहा है: **${title}**`);
+            }
+
+        } catch (error) {
+            console.error('Search selection error:', error);
+            return interaction.editReply('❌ गाना play करने में error हुई!');
         }
     }
 });

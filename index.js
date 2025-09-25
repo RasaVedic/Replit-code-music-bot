@@ -1,6 +1,7 @@
 const { Client, Collection, GatewayIntentBits, REST, Routes } = require('discord.js');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, VoiceConnectionStatus } = require('@discordjs/voice');
-const ytdl = require('ytdl-core');
+const ytdl = require('@distube/ytdl-core');
+const YouTube = require('youtube-sr').default;
 const fs = require('fs');
 const path = require('path');
 
@@ -117,8 +118,11 @@ async function playNext(guildId) {
             filter: 'audioonly',
             quality: 'highestaudio',
             highWaterMark: 1 << 25,
-            opusEncoded: false,
-            encoderArgs: ['-af', 'bass=g=2,dynaudnorm=f=200']
+            requestOptions: {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+            }
         });
 
         const resource = createAudioResource(stream, {

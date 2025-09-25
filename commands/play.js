@@ -1,14 +1,15 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { joinVoiceChannel } = require('@discordjs/voice');
-const ytdl = require('ytdl-core');
+const ytdl = require('@distube/ytdl-core');
+const YouTube = require('youtube-sr').default;
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('play')
-        .setDescription('YouTube URL से गाना play करें')
+        .setDescription('YouTube URL या गाने का नाम से play करें')
         .addStringOption(option =>
-            option.setName('url')
-                .setDescription('YouTube video का URL')
+            option.setName('query')
+                .setDescription('YouTube URL या गाने का नाम')
                 .setRequired(true)
         ),
 
@@ -21,26 +22,40 @@ module.exports = {
         }
         
         const voiceChannel = member.voice?.channel;
-        const url = interaction.options.getString('url');
+        const query = interaction.options.getString('query');
 
         if (!voiceChannel) {
             return interaction.editReply('❌ आपको पहले किसी voice channel में join करना होगा!');
         }
 
-        if (!ytdl.validateURL(url)) {
-            return interaction.editReply('❌ Invalid YouTube URL! सही YouTube link दें।');
-        }
-
         try {
-            // Get video info
-            const info = await ytdl.getInfo(url);
-            const title = info.videoDetails.title;
-            const duration = parseInt(info.videoDetails.lengthSeconds);
-            const thumbnail = info.videoDetails.thumbnails[0]?.url;
+            let videoUrl, title, duration, thumbnail;
+
+            // Check if it's a URL or search query
+            if (ytdl.validateURL(query)) {
+                // It's a URL
+                videoUrl = query;
+                const info = await ytdl.getInfo(videoUrl);
+                title = info.videoDetails.title;
+                duration = parseInt(info.videoDetails.lengthSeconds);
+                thumbnail = info.videoDetails.thumbnails[0]?.url;
+            } else {
+                // It's a search query
+                const searchResults = await YouTube.search(query, { limit: 1 });
+                if (!searchResults || searchResults.length === 0) {
+                    return interaction.editReply('❌ कोई गाना नहीं मिला! दूसरा नाम try करें।');
+                }
+                
+                const video = searchResults[0];
+                videoUrl = video.url;
+                title = video.title;
+                duration = video.durationInSec || 0;
+                thumbnail = video.thumbnail?.url;
+            }
 
             const song = {
                 title,
-                url,
+                url: videoUrl,
                 duration,
                 thumbnail,
                 requestedBy: interaction.user,
@@ -78,7 +93,7 @@ module.exports = {
 
         } catch (error) {
             console.error('Play command error:', error);
-            return interaction.editReply('❌ गाना play करने में error हुई! URL check करें।');
+            return interaction.editReply('❌ गाना play करने में error हुई! दूसरा गाना try करें।');
         }
     },
 };

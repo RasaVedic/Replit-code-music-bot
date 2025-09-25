@@ -11,8 +11,9 @@
   "description": "",
   "dependencies": {
     "@discordjs/voice": "^0.18.0",
+    "@distube/ytdl-core": "^4.16.12",
     "discord.js": "^14.22.1",
     "tweetnacl": "^1.0.3",
-    "ytdl-core": "^4.11.5"
+    "youtube-sr": "^4.3.12"
   }
 }

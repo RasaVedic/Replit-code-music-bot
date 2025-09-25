@@ -31,17 +31,41 @@ module.exports = {
         try {
             let videoUrl, title, duration, thumbnail;
 
-            // Check if it's a URL or search query
+            // Always use search for more reliable results (bypasses bot detection)
+            let searchResults;
+            
             if (ytdl.validateURL(query)) {
-                // It's a URL
-                videoUrl = query;
-                const info = await ytdl.getInfo(videoUrl);
-                title = info.videoDetails.title;
-                duration = parseInt(info.videoDetails.lengthSeconds);
-                thumbnail = info.videoDetails.thumbnails[0]?.url;
+                // If it's a URL, extract video ID and search by title for reliability
+                try {
+                    const videoId = ytdl.getVideoID(query);
+                    searchResults = await YouTube.search(`site:youtube.com watch?v=${videoId}`, { limit: 1 });
+                    
+                    // If search fails, try direct URL as fallback
+                    if (!searchResults || searchResults.length === 0) {
+                        const info = await ytdl.getInfo(query, {
+                            requestOptions: {
+                                headers: {
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                                }
+                            }
+                        });
+                        videoUrl = query;
+                        title = info.videoDetails.title;
+                        duration = parseInt(info.videoDetails.lengthSeconds);
+                        thumbnail = info.videoDetails.thumbnails[0]?.url;
+                    } else {
+                        const video = searchResults[0];
+                        videoUrl = video.url;
+                        title = video.title;
+                        duration = video.durationInSec || 0;
+                        thumbnail = video.thumbnail?.url;
+                    }
+                } catch (urlError) {
+                    return interaction.editReply('❌ Invalid YouTube URL या server issue! गाने का नाम try करें।');
+                }
             } else {
                 // It's a search query
-                const searchResults = await YouTube.search(query, { limit: 1 });
+                searchResults = await YouTube.search(query, { limit: 1 });
                 if (!searchResults || searchResults.length === 0) {
                     return interaction.editReply('❌ कोई गाना नहीं मिला! दूसरा नाम try करें।');
                 }

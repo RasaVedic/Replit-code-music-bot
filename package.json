@@ -10,9 +10,11 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@discordjs/opus": "^0.10.0",
     "@discordjs/voice": "^0.18.0",
     "@distube/ytdl-core": "^4.16.12",
     "discord.js": "^14.22.1",
+    "opusscript": "^0.0.8",
     "tweetnacl": "^1.0.3",
     "youtube-sr": "^4.3.12"
   }

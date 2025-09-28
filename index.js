@@ -282,15 +282,27 @@ async function createFallbackPlayer(guildId, voiceChannel, textChannel) {
             adapterCreator: voiceChannel.guild.voiceAdapterCreator,
         });
 
-        // Handle connection state changes
+        // Handle connection state changes with proper cleanup
         connection.on(VoiceConnectionStatus.Disconnected, () => {
             console.log(`🔌 Voice connection disconnected for guild ${guildId}`);
-            cleanupFallbackPlayer(guildId);
+            setTimeout(() => cleanupFallbackPlayer(guildId), 100); // Small delay to prevent race conditions
         });
 
         connection.on(VoiceConnectionStatus.Destroyed, () => {
             console.log(`💥 Voice connection destroyed for guild ${guildId}`);
-            cleanupFallbackPlayer(guildId);
+            // Don't call cleanup here as connection is already destroyed
+            const player = global.audioPlayers.get(guildId);
+            if (player) {
+                try {
+                    player.stop();
+                    global.audioPlayers.delete(guildId);
+                } catch (error) {
+                    console.log(`Player stop warning: ${error.message}`);
+                }
+            }
+            global.connections.delete(guildId);
+            const queue = getQueue(guildId);
+            if (queue) queue.clear();
         });
 
         const player = createAudioPlayer();
@@ -332,11 +344,18 @@ async function playFallbackTrack(guildId, track) {
         let attempts = 0;
         const maxAttempts = 3;
         
-        // Enhanced headers to avoid detection
+        // Enhanced headers with rotating user agents to avoid detection
+        const userAgents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        ];
+        
         const enhancedHeaders = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)],
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
             'Accept-Encoding': 'gzip, deflate, br',
             'DNT': '1',
             'Connection': 'keep-alive',
@@ -346,7 +365,9 @@ async function playFallbackTrack(guildId, track) {
             'Sec-Fetch-Site': 'none',
             'Sec-Fetch-User': '?1',
             'Cache-Control': 'max-age=0',
-            'Cookie': process.env.YOUTUBE_COOKIE || ''
+            'sec-ch-ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"'
         };
 
         // Retry mechanism for YouTube streaming
@@ -377,9 +398,14 @@ async function playFallbackTrack(guildId, track) {
                 }
             }
 
-            // Try ytdl-core as fallback with enhanced options
+            // Try ytdl-core as fallback with enhanced options and better error handling
             if (!stream && track.url) {
                 try {
+                    // Random delay between attempts to avoid pattern detection
+                    if (attempts > 1) {
+                        await new Promise(resolve => setTimeout(resolve, Math.random() * 2000 + 1000));
+                    }
+                    
                     stream = ytdl(track.url, {
                         filter: 'audioonly',
                         quality: 'highestaudio',
@@ -387,28 +413,46 @@ async function playFallbackTrack(guildId, track) {
                         dlChunkSize: 0, // Disable chunking for better compatibility
                         requestOptions: {
                             headers: enhancedHeaders,
+                            maxRedirects: 3,
+                            timeout: 15000, // 15 second timeout
                             transform: (parsed) => {
-                                // Add random delay to avoid rate limiting
+                                // Add random delay and IP to avoid rate limiting
                                 return Object.assign(parsed, {
                                     headers: Object.assign(parsed.headers, {
-                                        'X-Forwarded-For': generateRandomIP()
+                                        'X-Forwarded-For': generateRandomIP(),
+                                        'X-Real-IP': generateRandomIP()
                                     })
                                 });
                             }
                         },
-                        // Disable some features that might trigger detection
+                        // Enhanced options to avoid detection
                         lang: 'en',
+                        format: 'audioonly',
+                        begin: '0s', // Start from beginning
+                        liveBuffer: 20000, // Buffer for live streams
                         // Use IPv6 when possible
-                        IPv6Block: process.env.YTDL_IPV6_BLOCK || undefined
+                        IPv6Block: process.env.YTDL_IPV6_BLOCK || undefined,
+                        // Disable some features that might trigger detection
+                        playerParams: {
+                            html5: 1,
+                            c: 'WEB',
+                            cver: '2.20240101.01.00'
+                        }
                     });
                     console.log(`[${guildId}] Playing with ytdl-core (attempt ${attempts}): ${track.title}`);
                     break;
                 } catch (error) {
                     console.log(`[${guildId}] ytdl-core failed (attempt ${attempts}: ${error.message})`);
                     
+                    // If it's a parsing error, try to handle it gracefully
+                    if (error.message.includes('watch.html') || error.message.includes('parsing')) {
+                        console.log(`[${guildId}] YouTube parsing error detected, skipping to search-based fallback`);
+                        break; // Skip remaining attempts and go to search-based fallback
+                    }
+                    
                     // Wait before retry with exponential backoff
                     if (attempts < maxAttempts) {
-                        await new Promise(resolve => setTimeout(resolve, 2000 * attempts));
+                        await new Promise(resolve => setTimeout(resolve, 2000 * attempts + Math.random() * 1000));
                     }
                 }
             }
@@ -452,32 +496,72 @@ function generateRandomIP() {
     return Array.from({length: 4}, () => Math.floor(Math.random() * 256)).join('.');
 }
 
-// Search-based fallback when direct URL streaming fails
+// Enhanced search-based fallback with multiple search strategies
 async function trySearchBasedFallback(track) {
     try {
-        console.log(`Trying search-based fallback for: ${track.title}`);
+        console.log(`Trying enhanced search-based fallback for: ${track.title}`);
         
-        // Search for the track by title instead of using direct URL
-        const searchQuery = `${track.title} ${track.author || ''}`.trim();
-        const results = await YouTube.search(searchQuery, { limit: 3 });
+        // Multiple search strategies
+        const searchQueries = [
+            `${track.title} ${track.author || ''}`.trim(),
+            track.title,
+            `${track.title} audio`.trim(),
+            `${track.author} ${track.title}`.trim()
+        ];
         
-        if (results.length > 0) {
-            // Try each result until one works
-            for (const result of results) {
-                try {
-                    const stream = await play.stream(result.url, {
-                        quality: 2,
-                        discordPlayerCompatibility: true
-                    });
-                    console.log(`Search-based fallback successful with: ${result.title}`);
-                    return stream;
-                } catch (error) {
-                    console.log(`Search result failed: ${error.message}`);
+        for (const searchQuery of searchQueries) {
+            try {
+                const results = await YouTube.search(searchQuery, { 
+                    limit: 5, 
+                    type: 'video',
+                    safeSearch: false
+                });
+                
+                if (results.length > 0) {
+                    // Try each result until one works
+                    for (const result of results) {
+                        try {
+                            // Skip very short videos (likely ads/shorts)
+                            if (result.duration && result.duration < 30) {
+                                continue;
+                            }
+                            
+                            // First try play-dl with enhanced settings
+                            const stream = await play.stream(result.url, {
+                                quality: 2,
+                                discordPlayerCompatibility: true,
+                                htmldata: false // Avoid HTML parsing issues
+                            });
+                            console.log(`Search-based fallback successful with: ${result.title}`);
+                            return stream;
+                        } catch (error) {
+                            console.log(`Search result failed (${result.title}): ${error.message}`);
+                            
+                            // If play-dl fails, try ytdl-core with minimal options
+                            try {
+                                const simpleStream = ytdl(result.url, {
+                                    filter: 'audioonly',
+                                    quality: 'lowest', // Use lowest quality for better reliability
+                                    requestOptions: {
+                                        headers: {
+                                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                                        }
+                                    }
+                                });
+                                console.log(`Search-based fallback successful with ytdl-core: ${result.title}`);
+                                return simpleStream;
+                            } catch (ytdlError) {
+                                console.log(`ytdl-core also failed: ${ytdlError.message}`);
+                            }
+                        }
+                    }
                 }
+            } catch (searchError) {
+                console.log(`Search query "${searchQuery}" failed: ${searchError.message}`);
             }
         }
     } catch (error) {
-        console.log(`Search-based fallback failed: ${error.message}`);
+        console.log(`Enhanced search-based fallback failed: ${error.message}`);
     }
     return null;
 }
@@ -593,24 +677,38 @@ async function getFallbackAutoplaySuggestion(lastTrack) {
     return null;
 }
 
-// Cleanup fallback player resources
+// Cleanup fallback player resources with proper state checking
 function cleanupFallbackPlayer(guildId) {
     const player = global.audioPlayers.get(guildId);
     const connection = global.connections.get(guildId);
     
     if (player) {
-        player.stop();
-        global.audioPlayers.delete(guildId);
+        try {
+            player.stop();
+            global.audioPlayers.delete(guildId);
+        } catch (error) {
+            console.log(`Player cleanup warning for guild ${guildId}: ${error.message}`);
+        }
     }
     
     if (connection) {
-        connection.destroy();
-        global.connections.delete(guildId);
+        try {
+            // Check if connection is not already destroyed
+            if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
+                connection.destroy();
+            }
+            global.connections.delete(guildId);
+        } catch (error) {
+            console.log(`Connection cleanup warning for guild ${guildId}: ${error.message}`);
+            global.connections.delete(guildId); // Remove from map even if destroy fails
+        }
     }
     
     const queue = getQueue(guildId);
-    queue.clear();
-    global.queues.delete(guildId);
+    if (queue) {
+        queue.clear();
+        global.queues.delete(guildId);
+    }
     
     console.log(`🧹 Cleaned up fallback player for guild ${guildId}`);
 }
@@ -886,6 +984,12 @@ async function handleCommand(command, message, args, guildSettings) {
         case 'equalizer':
         case 'eq':
             await handleEqualizerCommand(message, args, guildSettings);
+            break;
+        
+        case 'leave':
+        case 'lv':
+        case 'disconnect':
+            await handleLeaveCommand(message, guildSettings);
             break;
         
         case 'setprefix':
@@ -1177,8 +1281,16 @@ async function handleStopCommand(message, guildSettings) {
         }
         
         if (connection) {
-            connection.destroy();
-            global.connections.delete(message.guild.id);
+            try {
+                // Check if connection is not already destroyed
+                if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
+                    connection.destroy();
+                }
+                global.connections.delete(message.guild.id);
+            } catch (error) {
+                console.log(`Stop command cleanup warning: ${error.message}`);
+                global.connections.delete(message.guild.id);
+            }
         }
     }
 
@@ -1503,6 +1615,81 @@ async function handleAutoplayCommand(message, guildSettings) {
                 ? '⚠️ Autoplay toggle करने में problem हुई!'
                 : '⚠️ Failed to toggle autoplay!')
             .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Leave Command
+async function handleLeaveCommand(message, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    const guildId = message.guild.id;
+    
+    try {
+        // Check if bot is in a voice channel
+        const connection = global.connections?.get(guildId);
+        const player = global.audioPlayers?.get(guildId);
+        const queue = global.queues?.get(guildId);
+        
+        if (!connection && !player) {
+            const embed = new EmbedBuilder()
+                .setTitle('❌ Not Connected')
+                .setDescription(lang === 'hi' 
+                    ? 'मैं किसी voice channel में नहीं हूं!'
+                    : "I'm not in any voice channel!")
+                .setColor(config.COLORS.ERROR);
+            
+            return await message.reply({ embeds: [embed] });
+        }
+
+        // Stop music and clear queue with proper error handling
+        if (player) {
+            try {
+                player.stop();
+                global.audioPlayers.delete(guildId);
+            } catch (error) {
+                console.log(`Player cleanup warning: ${error.message}`);
+            }
+        }
+        
+        if (queue) {
+            queue.clear();
+            global.queues.delete(guildId);
+        }
+        
+        // Safely destroy connection
+        if (connection) {
+            try {
+                if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
+                    connection.destroy();
+                }
+                global.connections?.delete(guildId);
+            } catch (error) {
+                console.log(`Leave command cleanup warning: ${error.message}`);
+                global.connections?.delete(guildId);
+            }
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle('👋 Successfully Disconnected')
+            .setDescription(lang === 'hi' 
+                ? 'Voice channel से disconnect हो गया!'
+                : 'Successfully disconnected from voice channel!')
+            .setColor(config.COLORS.SUCCESS)
+            .setFooter({ text: 'Queue cleared and music stopped' })
+            .setTimestamp();
+
+        await message.reply({ embeds: [embed] });
+        console.log(`🚪 Bot left voice channel in guild ${guildId} via message command`);
+
+    } catch (error) {
+        console.error('Leave command error:', error);
+        const embed = new EmbedBuilder()
+            .setTitle('⚠️ Error')
+            .setDescription(lang === 'hi' 
+                ? 'Disconnect करने में problem हुई!'
+                : 'Failed to disconnect!')
+            .setColor(config.COLORS.ERROR);
+        
         await message.reply({ embeds: [embed] });
     }
 }

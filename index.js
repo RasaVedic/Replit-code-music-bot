@@ -610,10 +610,30 @@ client.on('messageCreate', async (message) => {
     const guildSettings = getGuildSettings(message.guild.id);
     const prefix = guildSettings.prefix;
 
-    if (!message.content.startsWith(prefix)) return;
+    // Check for prefix command or @bot mention
+    const isMention = message.mentions.has(client.user);
+    const isPrefix = message.content.startsWith(prefix);
+    
+    if (!isPrefix && !isMention) return;
 
-    const args = message.content.slice(prefix.length).trim().split(/ +/);
-    const commandName = args.shift().toLowerCase();
+    let args, commandName;
+    
+    if (isMention) {
+        // Handle @bot mention commands like "@bot play song"
+        const cleanContent = message.content.replace(`<@${client.user.id}>`, '').replace(`<@!${client.user.id}>`, '').trim();
+        args = cleanContent.split(/ +/);
+        commandName = args.shift()?.toLowerCase();
+        
+        if (!commandName) {
+            // Just @bot mention without command - show help
+            commandName = 'help';
+            args = [];
+        }
+    } else {
+        // Handle prefix commands like "!play song"
+        args = message.content.slice(prefix.length).trim().split(/ +/);
+        commandName = args.shift().toLowerCase();
+    }
 
     // Check for command aliases
     const actualCommand = config.ALIASES[commandName] || commandName;
@@ -712,10 +732,12 @@ async function handleCommand(command, message, args, guildSettings) {
             break;
         
         case 'autoplay':
+        case 'ap':
             await handleAutoplayCommand(message, guildSettings);
             break;
         
         case 'shuffle':
+        case 'sh':
             await handleShuffleCommand(message, guildSettings);
             break;
         
@@ -1119,7 +1141,526 @@ async function handleResumeCommand(message, guildSettings) {
     }
 }
 
+// Volume Command
+async function handleVolumeCommand(message, args, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    const messages = config.MESSAGES[lang];
+    
+    try {
+        const queue = getQueue(message.guild.id);
+        
+        if (!queue || !queue.nowPlaying) {
+            const embed = new EmbedBuilder()
+                .setDescription(messages.NO_SONG_PLAYING)
+                .setColor(config.COLORS.ERROR);
+            return await message.reply({ embeds: [embed] });
+        }
+
+        if (!args[0]) {
+            const embed = new EmbedBuilder()
+                .setDescription(`🔊 Current volume: ${queue.volume}%`)
+                .setColor(config.COLORS.MUSIC);
+            return await message.reply({ embeds: [embed] });
+        }
+
+        const volume = parseInt(args[0]);
+        if (isNaN(volume) || volume < 0 || volume > 100) {
+            const embed = new EmbedBuilder()
+                .setDescription(lang === 'hi' 
+                    ? '⚠️ Volume 0-100 के बीच होना चाहिए!'
+                    : '⚠️ Volume should be between 0-100!')
+                .setColor(config.COLORS.ERROR);
+            return await message.reply({ embeds: [embed] });
+        }
+
+        queue.volume = volume;
+
+        if (lavalinkAvailable) {
+            const player = lavalinkManager.getPlayer(message.guild.id);
+            if (player) {
+                await player.setVolume(volume);
+            }
+        } else {
+            // Fallback volume control
+            const audioPlayer = global.audioPlayers.get(message.guild.id);
+            if (audioPlayer && audioPlayer.state.resource && audioPlayer.state.resource.volume) {
+                audioPlayer.state.resource.volume.setVolume(volume / 100);
+            }
+        }
+
+        const embed = new EmbedBuilder()
+            .setDescription(`🔊 Volume set to: ${volume}%`)
+            .setColor(config.COLORS.SUCCESS);
+        await message.reply({ embeds: [embed] });
+
+    } catch (error) {
+        console.error('Volume command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? '⚠️ Volume set करने में problem हुई!'
+                : '⚠️ Failed to set volume!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Queue Command
+async function handleQueueCommand(message, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    
+    try {
+        const queue = getQueue(message.guild.id);
+        
+        if (!queue || queue.isEmpty()) {
+            const embed = new EmbedBuilder()
+                .setDescription(lang === 'hi' 
+                    ? '📭 Queue empty है!'
+                    : '📭 Queue is empty!')
+                .setColor(config.COLORS.ERROR);
+            return await message.reply({ embeds: [embed] });
+        }
+
+        let description = '';
+        if (queue.nowPlaying) {
+            description += lang === 'hi' 
+                ? `**अभी चल रहा है:**\n${queue.nowPlaying.info.title} - ${queue.nowPlaying.info.author}\n\n`
+                : `**Now Playing:**\n${queue.nowPlaying.info.title} - ${queue.nowPlaying.info.author}\n\n`;
+        }
+
+        if (queue.songs.length > 0) {
+            description += lang === 'hi' ? '**आगे के गाने:**\n' : '**Up Next:**\n';
+            
+            for (let i = 0; i < Math.min(queue.songs.length, 10); i++) {
+                const track = queue.songs[i];
+                description += `${i + 1}. ${track.info.title} - ${track.info.author}\n`;
+            }
+            
+            if (queue.songs.length > 10) {
+                description += lang === 'hi' 
+                    ? `\n...और ${queue.songs.length - 10} और गाने`
+                    : `\n...and ${queue.songs.length - 10} more songs`;
+            }
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle(`${config.EMOJIS.QUEUE} Music Queue`)
+            .setDescription(description)
+            .setFooter({ text: lang === 'hi' 
+                ? `कुल गाने: ${queue.songs.length} | Volume: ${queue.volume}%`
+                : `Total songs: ${queue.songs.length} | Volume: ${queue.volume}%` })
+            .setColor(config.COLORS.MUSIC);
+
+        await message.reply({ embeds: [embed] });
+
+    } catch (error) {
+        console.error('Queue command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? '⚠️ Queue show करने में problem हुई!'
+                : '⚠️ Failed to show queue!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Now Playing Command
+async function handleNowPlayingCommand(message, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    
+    try {
+        const queue = getQueue(message.guild.id);
+        
+        if (!queue || !queue.nowPlaying) {
+            const embed = new EmbedBuilder()
+                .setDescription(lang === 'hi' 
+                    ? '📭 कोई गाना play नहीं हो रहा है!'
+                    : '📭 No music is currently playing!')
+                .setColor(config.COLORS.ERROR);
+            return await message.reply({ embeds: [embed] });
+        }
+
+        const nowPlayingMessage = createNowPlayingEmbed(queue.nowPlaying, queue, guildSettings);
+        await message.reply(nowPlayingMessage);
+
+    } catch (error) {
+        console.error('Now playing command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? '⚠️ Now playing show करने में problem हुई!'
+                : '⚠️ Failed to show now playing!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Autoplay Command
+async function handleAutoplayCommand(message, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    
+    try {
+        const queue = getQueue(message.guild.id);
+        queue.autoplay = !queue.autoplay;
+        
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? `🎵 Autoplay ${queue.autoplay ? 'ON' : 'OFF'} हो गया!`
+                : `🎵 Autoplay ${queue.autoplay ? 'ON' : 'OFF'}!`)
+            .setColor(queue.autoplay ? config.COLORS.SUCCESS : config.COLORS.ERROR);
+        
+        await message.reply({ embeds: [embed] });
+
+    } catch (error) {
+        console.error('Autoplay command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? '⚠️ Autoplay toggle करने में problem हुई!'
+                : '⚠️ Failed to toggle autoplay!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Shuffle Command
+async function handleShuffleCommand(message, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    
+    try {
+        const queue = getQueue(message.guild.id);
+        
+        if (!queue || queue.isEmpty()) {
+            const embed = new EmbedBuilder()
+                .setDescription(lang === 'hi' 
+                    ? '📭 Queue empty है!'
+                    : '📭 Queue is empty!')
+                .setColor(config.COLORS.ERROR);
+            return await message.reply({ embeds: [embed] });
+        }
+
+        queue.shuffle();
+        
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? '🔀 Queue shuffle हो गया!'
+                : '🔀 Queue shuffled!')
+            .setColor(config.COLORS.SUCCESS);
+        
+        await message.reply({ embeds: [embed] });
+
+    } catch (error) {
+        console.error('Shuffle command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? '⚠️ Queue shuffle करने में problem हुई!'
+                : '⚠️ Failed to shuffle queue!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
 async function handleButtonInteraction(interaction, guildSettings) {
+    const lang = guildSettings.language || 'hi';
+    const messages = config.MESSAGES[lang];
+    const queue = getQueue(interaction.guild.id);
+
+    try {
+        await interaction.deferReply({ ephemeral: true });
+
+        if (!queue || !queue.nowPlaying) {
+            return await interaction.editReply({
+                content: lang === 'hi' 
+                    ? '📭 कोई गाना play नहीं हो रहा है!'
+                    : '📭 No music is currently playing!',
+                ephemeral: true
+            });
+        }
+
+        // Handle button actions
+        switch (interaction.customId) {
+            case 'pause':
+                if (lavalinkAvailable) {
+                    const player = lavalinkManager.getPlayer(interaction.guild.id);
+                    if (player) {
+                        if (player.paused) {
+                            await player.resume();
+                            await interaction.editReply({ 
+                                content: '▶️ Resumed!',
+                                ephemeral: true 
+                            });
+                        } else {
+                            await player.pause();
+                            await interaction.editReply({ 
+                                content: '⏸️ Paused!',
+                                ephemeral: true 
+                            });
+                        }
+                    }
+                } else {
+                    // Fallback pause/resume
+                    const audioPlayer = global.audioPlayers.get(interaction.guild.id);
+                    if (audioPlayer) {
+                        if (audioPlayer.state.status === AudioPlayerStatus.Paused) {
+                            audioPlayer.unpause();
+                            await interaction.editReply({ 
+                                content: '▶️ Resumed! (Fallback)',
+                                ephemeral: true 
+                            });
+                        } else {
+                            audioPlayer.pause();
+                            await interaction.editReply({ 
+                                content: '⏸️ Paused! (Fallback)',
+                                ephemeral: true 
+                            });
+                        }
+                    }
+                }
+                break;
+
+            case 'skip':
+                if (lavalinkAvailable) {
+                    const player = lavalinkManager.getPlayer(interaction.guild.id);
+                    if (player) {
+                        await player.skip();
+                        await interaction.editReply({ 
+                            content: '⏭️ Skipped!',
+                            ephemeral: true 
+                        });
+                    }
+                } else {
+                    // Fallback skip
+                    const nextTrack = queue.getNext();
+                    if (nextTrack) {
+                        queue.nowPlaying = nextTrack;
+                        await playFallbackTrack(interaction.guild.id, nextTrack);
+                        await interaction.editReply({ 
+                            content: '⏭️ Skipped! (Fallback)',
+                            ephemeral: true 
+                        });
+                    } else {
+                        queue.nowPlaying = null;
+                        const audioPlayer = global.audioPlayers.get(interaction.guild.id);
+                        if (audioPlayer) audioPlayer.stop();
+                        await interaction.editReply({ 
+                            content: '⏹️ Queue ended!',
+                            ephemeral: true 
+                        });
+                    }
+                }
+                break;
+
+            case 'stop':
+                if (lavalinkAvailable) {
+                    const player = lavalinkManager.getPlayer(interaction.guild.id);
+                    if (player) {
+                        await player.destroy();
+                    }
+                } else {
+                    // Fallback stop
+                    const audioPlayer = global.audioPlayers.get(interaction.guild.id);
+                    if (audioPlayer) audioPlayer.stop();
+                    cleanupFallbackPlayer(interaction.guild.id);
+                }
+                queue.clear();
+                queue.nowPlaying = null;
+                await interaction.editReply({ 
+                    content: '⏹️ Stopped and cleared queue!',
+                    ephemeral: true 
+                });
+                break;
+
+            case 'shuffle':
+                if (queue.isEmpty()) {
+                    await interaction.editReply({ 
+                        content: '📭 Queue is empty!',
+                        ephemeral: true 
+                    });
+                } else {
+                    queue.shuffle();
+                    await interaction.editReply({ 
+                        content: '🔀 Queue shuffled!',
+                        ephemeral: true 
+                    });
+                }
+                break;
+
+            case 'loop':
+                queue.loop = !queue.loop;
+                await interaction.editReply({ 
+                    content: `🔁 Loop ${queue.loop ? 'ON' : 'OFF'}!`,
+                    ephemeral: true 
+                });
+                break;
+
+            case 'autoplay':
+                queue.autoplay = !queue.autoplay;
+                await interaction.editReply({ 
+                    content: `🎵 Autoplay ${queue.autoplay ? 'ON' : 'OFF'}!`,
+                    ephemeral: true 
+                });
+                break;
+
+            case 'volume_up':
+                const newVolumeUp = Math.min(queue.volume + 10, 100);
+                queue.volume = newVolumeUp;
+                if (lavalinkAvailable) {
+                    const player = lavalinkManager.getPlayer(interaction.guild.id);
+                    if (player) await player.setVolume(newVolumeUp);
+                } else {
+                    const audioPlayer = global.audioPlayers.get(interaction.guild.id);
+                    if (audioPlayer && audioPlayer.state.resource && audioPlayer.state.resource.volume) {
+                        audioPlayer.state.resource.volume.setVolume(newVolumeUp / 100);
+                    }
+                }
+                await interaction.editReply({ 
+                    content: `🔊 Volume: ${newVolumeUp}%`,
+                    ephemeral: true 
+                });
+                break;
+
+            case 'volume_down':
+                const newVolumeDown = Math.max(queue.volume - 10, 0);
+                queue.volume = newVolumeDown;
+                if (lavalinkAvailable) {
+                    const player = lavalinkManager.getPlayer(interaction.guild.id);
+                    if (player) await player.setVolume(newVolumeDown);
+                } else {
+                    const audioPlayer = global.audioPlayers.get(interaction.guild.id);
+                    if (audioPlayer && audioPlayer.state.resource && audioPlayer.state.resource.volume) {
+                        audioPlayer.state.resource.volume.setVolume(newVolumeDown / 100);
+                    }
+                }
+                await interaction.editReply({ 
+                    content: `🔉 Volume: ${newVolumeDown}%`,
+                    ephemeral: true 
+                });
+                break;
+
+            case 'queue':
+                let queueText = '';
+                if (queue.nowPlaying) {
+                    queueText += `**Now Playing:**\n${queue.nowPlaying.info.title} - ${queue.nowPlaying.info.author}\n\n`;
+                }
+                if (queue.songs.length > 0) {
+                    queueText += '**Up Next:**\n';
+                    for (let i = 0; i < Math.min(queue.songs.length, 5); i++) {
+                        const track = queue.songs[i];
+                        queueText += `${i + 1}. ${track.info.title} - ${track.info.author}\n`;
+                    }
+                    if (queue.songs.length > 5) {
+                        queueText += `\n...and ${queue.songs.length - 5} more songs`;
+                    }
+                } else {
+                    queueText += 'Queue is empty!';
+                }
+                await interaction.editReply({ 
+                    content: queueText,
+                    ephemeral: true 
+                });
+                break;
+
+            default:
+                await interaction.editReply({ 
+                    content: 'Unknown button action!',
+                    ephemeral: true 
+                });
+        }
+
+    } catch (error) {
+        console.error('Button interaction error:', error);
+        try {
+            await interaction.editReply({ 
+                content: 'Error processing button action!',
+                ephemeral: true 
+            });
+        } catch (e) {
+            console.error('Error sending error reply:', e);
+        }
+    }
+}
+
+// Add missing join/leave command handlers
+async function handleJoinCommand(message, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    
+    try {
+        const voiceChannel = message.member.voice.channel;
+        if (!voiceChannel) {
+            const embed = new EmbedBuilder()
+                .setDescription(lang === 'hi' 
+                    ? '⚠️ पहले voice channel join करें!'
+                    : '⚠️ You need to join a voice channel first!')
+                .setColor(config.COLORS.ERROR);
+            return await message.reply({ embeds: [embed] });
+        }
+
+        if (lavalinkAvailable) {
+            // Use Lavalink
+            const player = lavalinkManager.create({
+                guild: message.guild.id,
+                voiceChannel: voiceChannel.id,
+                textChannel: message.channel.id,
+                selfDeafen: true
+            });
+            await player.connect();
+        } else {
+            // Use fallback
+            await createFallbackPlayer(message.guild.id, voiceChannel, message.channel);
+        }
+
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? `✅ ${voiceChannel.name} में join हो गया!`
+                : `✅ Joined ${voiceChannel.name}!`)
+            .setColor(config.COLORS.SUCCESS);
+        await message.reply({ embeds: [embed] });
+
+    } catch (error) {
+        console.error('Join command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? '⚠️ Voice channel join करने में problem हुई!'
+                : '⚠️ Failed to join voice channel!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+async function handleLeaveCommand(message, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    
+    try {
+        if (lavalinkAvailable) {
+            const player = lavalinkManager.getPlayer(message.guild.id);
+            if (player) {
+                await player.destroy();
+            }
+        } else {
+            cleanupFallbackPlayer(message.guild.id);
+        }
+
+        const queue = getQueue(message.guild.id);
+        queue.clear();
+        queue.nowPlaying = null;
+
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? '👋 Voice channel से leave हो गया!'
+                : '👋 Left the voice channel!')
+            .setColor(config.COLORS.SUCCESS);
+        await message.reply({ embeds: [embed] });
+
+    } catch (error) {
+        console.error('Leave command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? '⚠️ Voice channel leave करने में problem हुई!'
+                : '⚠️ Failed to leave voice channel!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Previous handleButtonInteraction (keeping old for reference if needed)
+async function handleButtonInteractionOld(interaction, guildSettings) {
     const lang = guildSettings.language || 'hi';
     const messages = config.MESSAGES[lang];
     const player = lavalinkManager.getPlayer(interaction.guild.id);

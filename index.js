@@ -393,23 +393,23 @@ function createControlButtons() {
         .addComponents(
             new ButtonBuilder()
                 .setCustomId('music_pause')
-                .setLabel('⏸️')
+                .setLabel('⏸️ Pause')
                 .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
                 .setCustomId('music_skip')
-                .setLabel('⏭️')
+                .setLabel('⏭️ Skip')
                 .setStyle(ButtonStyle.Primary),
             new ButtonBuilder()
                 .setCustomId('music_stop')
-                .setLabel('⏹️')
+                .setLabel('⏹️ Stop')
                 .setStyle(ButtonStyle.Danger),
             new ButtonBuilder()
                 .setCustomId('music_shuffle')
-                .setLabel('🔀')
+                .setLabel('🔀 Shuffle')
                 .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
                 .setCustomId('music_queue')
-                .setLabel('📋')
+                .setLabel('📋 Queue')
                 .setStyle(ButtonStyle.Secondary)
         );
 }
@@ -419,19 +419,19 @@ function createVolumeButtons() {
         .addComponents(
             new ButtonBuilder()
                 .setCustomId('volume_down')
-                .setLabel('🔉')
+                .setLabel('🔉 Vol-')
                 .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
                 .setCustomId('volume_up')
-                .setLabel('🔊')
+                .setLabel('🔊 Vol+')
                 .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
                 .setCustomId('music_loop')
-                .setLabel('🔁')
+                .setLabel('🔁 Loop')
                 .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
                 .setCustomId('music_autoplay')
-                .setLabel('🎵')
+                .setLabel('🎵 AutoPlay')
                 .setStyle(ButtonStyle.Secondary)
         );
 }

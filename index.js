@@ -312,47 +312,100 @@ async function playFallbackTrack(guildId, track) {
 
     try {
         let stream = null;
+        let attempts = 0;
+        const maxAttempts = 3;
         
-        // Try play-dl first
-        if (track.url && (track.url.includes('youtube.com') || track.url.includes('youtu.be'))) {
-            try {
-                stream = await play.stream(track.url);
-                console.log(`[${guildId}] Playing with play-dl: ${track.title}`);
-            } catch (error) {
-                console.log(`[${guildId}] play-dl failed (${error.message}), trying ytdl-core...`);
-            }
-        }
+        // Enhanced headers to avoid detection
+        const enhancedHeaders = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
+            'Cookie': process.env.YOUTUBE_COOKIE || ''
+        };
 
-        // Try ytdl-core as fallback
-        if (!stream && track.url) {
-            try {
-                stream = ytdl(track.url, {
-                    filter: 'audioonly',
-                    quality: 'highestaudio',
-                    highWaterMark: 1 << 25,
-                    requestOptions: {
-                        headers: {
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                            'Cookie': process.env.YOUTUBE_COOKIE || ''
-                        }
+        // Retry mechanism for YouTube streaming
+        while (attempts < maxAttempts && !stream) {
+            attempts++;
+            
+            // Try play-dl first with enhanced configuration
+            if (track.url && (track.url.includes('youtube.com') || track.url.includes('youtu.be'))) {
+                try {
+                    // Set play-dl configuration
+                    await play.setToken({
+                        useragent: [enhancedHeaders['User-Agent']]
+                    });
+                    
+                    stream = await play.stream(track.url, {
+                        quality: 2, // High quality audio
+                        discordPlayerCompatibility: true
+                    });
+                    console.log(`[${guildId}] Playing with play-dl (attempt ${attempts}): ${track.title}`);
+                    break;
+                } catch (error) {
+                    console.log(`[${guildId}] play-dl failed (attempt ${attempts}: ${error.message})`);
+                    
+                    // Wait before retry
+                    if (attempts < maxAttempts) {
+                        await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
                     }
-                });
-                console.log(`[${guildId}] Playing with ytdl-core: ${track.title}`);
-            } catch (error) {
-                console.log(`[${guildId}] ytdl-core failed: ${error.message}`);
-                
-                // Notify user about YouTube streaming failure
-                if (error.message.includes('403') || error.message.includes('Status code: 403')) {
-                    notifyStreamingError(guildId, 'youtube_blocked');
-                } else {
-                    notifyStreamingError(guildId, 'streaming_failed');
                 }
-                return false;
+            }
+
+            // Try ytdl-core as fallback with enhanced options
+            if (!stream && track.url) {
+                try {
+                    stream = ytdl(track.url, {
+                        filter: 'audioonly',
+                        quality: 'highestaudio',
+                        highWaterMark: 1 << 25,
+                        dlChunkSize: 0, // Disable chunking for better compatibility
+                        requestOptions: {
+                            headers: enhancedHeaders,
+                            transform: (parsed) => {
+                                // Add random delay to avoid rate limiting
+                                return Object.assign(parsed, {
+                                    headers: Object.assign(parsed.headers, {
+                                        'X-Forwarded-For': generateRandomIP()
+                                    })
+                                });
+                            }
+                        },
+                        // Disable some features that might trigger detection
+                        lang: 'en',
+                        // Use IPv6 when possible
+                        IPv6Block: process.env.YTDL_IPV6_BLOCK || undefined
+                    });
+                    console.log(`[${guildId}] Playing with ytdl-core (attempt ${attempts}): ${track.title}`);
+                    break;
+                } catch (error) {
+                    console.log(`[${guildId}] ytdl-core failed (attempt ${attempts}: ${error.message})`);
+                    
+                    // Wait before retry with exponential backoff
+                    if (attempts < maxAttempts) {
+                        await new Promise(resolve => setTimeout(resolve, 2000 * attempts));
+                    }
+                }
             }
         }
 
         if (!stream) {
-            notifyStreamingError(guildId, 'no_stream');
+            // Try alternative search-based approach as last resort
+            console.log(`[${guildId}] All direct streaming failed, trying search-based fallback...`);
+            stream = await trySearchBasedFallback(track);
+        }
+
+        if (!stream) {
+            console.log(`[${guildId}] All streaming methods failed for: ${track.title}`);
+            notifyStreamingError(guildId, 'youtube_blocked');
             return false;
         }
 
@@ -372,8 +425,44 @@ async function playFallbackTrack(guildId, track) {
         return true;
     } catch (error) {
         console.error(`Failed to play fallback track: ${error.message}`);
+        notifyStreamingError(guildId, 'streaming_failed');
         return false;
     }
+}
+
+// Generate random IP for X-Forwarded-For header
+function generateRandomIP() {
+    return Array.from({length: 4}, () => Math.floor(Math.random() * 256)).join('.');
+}
+
+// Search-based fallback when direct URL streaming fails
+async function trySearchBasedFallback(track) {
+    try {
+        console.log(`Trying search-based fallback for: ${track.title}`);
+        
+        // Search for the track by title instead of using direct URL
+        const searchQuery = `${track.title} ${track.author || ''}`.trim();
+        const results = await YouTube.search(searchQuery, { limit: 3 });
+        
+        if (results.length > 0) {
+            // Try each result until one works
+            for (const result of results) {
+                try {
+                    const stream = await play.stream(result.url, {
+                        quality: 2,
+                        discordPlayerCompatibility: true
+                    });
+                    console.log(`Search-based fallback successful with: ${result.title}`);
+                    return stream;
+                } catch (error) {
+                    console.log(`Search result failed: ${error.message}`);
+                }
+            }
+        }
+    } catch (error) {
+        console.log(`Search-based fallback failed: ${error.message}`);
+    }
+    return null;
 }
 
 // Notify users about streaming errors

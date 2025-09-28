@@ -3,7 +3,7 @@ const { initDatabase, getGuildSettings, logCommand } = require('./src/database')
 const { getQueue } = require('./utils/QueueManager');
 const { getCachedGuildSettings, setupCacheCleanup } = require('./utils/CacheManager');
 const { initializeLavalink } = require('./src/MusicPlayer');
-const { handlePlayCommand, handleSkipCommand, handleStopCommand, handleQueueCommand, handleStatusCommand, handleHelpCommand } = require('./src/CommandHandlers');
+const { handlePlayCommand, handleSkipCommand, handleStopCommand, handleQueueCommand, handleStatusCommand, handleHelpCommand, handlePauseCommand, handleResumeCommand, handleVolumeCommand, handleJoinCommand, handleLeaveCommand } = require('./src/CommandHandlers');
 const { handleButtonInteraction } = require('./src/ButtonHandlers');
 const config = require('./config/botConfig');
 const fs = require('fs');
@@ -237,7 +237,30 @@ async function handleCommand(command, message, args, guildSettings) {
             await handleHelpCommand(message, guildSettings);
             break;
             
-        // Add other command handlers here as needed
+        case 'pause':
+        case 'ps':
+            await handlePauseCommand(message, guildSettings);
+            break;
+            
+        case 'resume':
+        case 'r':
+            await handleResumeCommand(message, guildSettings);
+            break;
+            
+        case 'volume':
+        case 'v':
+            await handleVolumeCommand(message, args, guildSettings);
+            break;
+            
+        case 'join':
+        case 'j':
+            await handleJoinCommand(message, guildSettings);
+            break;
+            
+        case 'leave':
+        case 'lv':
+            await handleLeaveCommand(message, guildSettings);
+            break;
         
         default:
             const embed = new EmbedBuilder()

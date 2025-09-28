@@ -8,6 +8,31 @@ const ytdl = require('@distube/ytdl-core');
 const YouTube = require('youtube-sr').default;
 const config = require('../config/botConfig');
 
+// Helper function to check if user is in same voice channel as bot
+function checkSameVoiceChannel(message) {
+    const userChannel = message.member.voice.channel;
+    if (!userChannel) {
+        return { valid: false, error: '❌ आपको voice channel में होना चाहिए!' };
+    }
+
+    // Check Lavalink mode first
+    if (lavalinkAvailable && lavalinkManager) {
+        const player = lavalinkManager.getPlayer(message.guild.id);
+        if (player && player.voiceChannelId && userChannel.id !== player.voiceChannelId) {
+            return { valid: false, error: '❌ आपको bot के साथ same voice channel में होना चाहिए!' };
+        }
+    } else {
+        // Check fallback mode
+        const { getVoiceConnection } = require('@discordjs/voice');
+        const connection = getVoiceConnection(message.guild.id);
+        if (connection && connection.joinConfig && userChannel.id !== connection.joinConfig.channelId) {
+            return { valid: false, error: '❌ आपको bot के साथ same voice channel में होना चाहिए!' };
+        }
+    }
+
+    return { valid: true };
+}
+
 // Play command handler with fallback
 async function handlePlayCommand(message, args, guildSettings) {
     const cachedSettings = getCachedGuildSettings(message.guild.id);
@@ -388,6 +413,384 @@ function formatUptime(seconds) {
     }
 }
 
+// Pause command handler
+async function handlePauseCommand(message, guildSettings) {
+    const { AudioPlayerStatus } = require('@discordjs/voice');
+    const queue = getQueue(message.guild.id);
+    
+    // Voice channel validation
+    const channelCheck = checkSameVoiceChannel(message);
+    if (!channelCheck.valid) {
+        const embed = new EmbedBuilder()
+            .setDescription(channelCheck.error)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    if (!queue.nowPlaying) {
+        const embed = new EmbedBuilder()
+            .setDescription('❌ कोई गाना play नहीं हो रहा है!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    try {
+        // Try Lavalink first
+        if (lavalinkAvailable && lavalinkManager) {
+            const player = lavalinkManager.getPlayer(message.guild.id);
+            if (player) {
+                if (player.paused) {
+                    const embed = new EmbedBuilder()
+                        .setDescription('❌ Music पहले से pause है!')
+                        .setColor(config.COLORS.WARNING);
+                    return await message.reply({ embeds: [embed] });
+                }
+                await player.pause(true);
+                const embed = new EmbedBuilder()
+                    .setTitle(`${config.EMOJIS.PAUSE} Music Paused`)
+                    .setDescription('⏸️ Music को pause कर दिया!')
+                    .setColor(config.COLORS.SUCCESS);
+                return await message.reply({ embeds: [embed] });
+            }
+        }
+
+        // Fallback to @discordjs/voice
+        const player = global.audioPlayers.get(message.guild.id);
+        if (!player) {
+            const embed = new EmbedBuilder()
+                .setDescription('❌ Audio player नहीं मिला!')
+                .setColor(config.COLORS.ERROR);
+            return await message.reply({ embeds: [embed] });
+        }
+        
+        if (player.state.status === AudioPlayerStatus.Playing) {
+            player.pause();
+            const embed = new EmbedBuilder()
+                .setTitle(`${config.EMOJIS.PAUSE} Music Paused`)
+                .setDescription('⏸️ Music को pause कर दिया!')
+                .setColor(config.COLORS.SUCCESS);
+            await message.reply({ embeds: [embed] });
+        } else {
+            const embed = new EmbedBuilder()
+                .setDescription('❌ Music पहले से pause है!')
+                .setColor(config.COLORS.WARNING);
+            await message.reply({ embeds: [embed] });
+        }
+    } catch (error) {
+        console.error('Pause command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription('❌ Pause करने में error हुई!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Resume command handler
+async function handleResumeCommand(message, guildSettings) {
+    const { AudioPlayerStatus } = require('@discordjs/voice');
+    const queue = getQueue(message.guild.id);
+    
+    // Voice channel validation
+    const channelCheck = checkSameVoiceChannel(message);
+    if (!channelCheck.valid) {
+        const embed = new EmbedBuilder()
+            .setDescription(channelCheck.error)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    if (!queue.nowPlaying) {
+        const embed = new EmbedBuilder()
+            .setDescription('❌ कोई गाना play नहीं हो रहा है!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    try {
+        // Try Lavalink first
+        if (lavalinkAvailable && lavalinkManager) {
+            const player = lavalinkManager.getPlayer(message.guild.id);
+            if (player) {
+                if (!player.paused) {
+                    const embed = new EmbedBuilder()
+                        .setDescription('❌ Music pause में नहीं है!')
+                        .setColor(config.COLORS.WARNING);
+                    return await message.reply({ embeds: [embed] });
+                }
+                await player.pause(false);
+                const embed = new EmbedBuilder()
+                    .setTitle(`${config.EMOJIS.PLAY} Music Resumed`)
+                    .setDescription('▶️ Music को resume कर दिया!')
+                    .setColor(config.COLORS.SUCCESS);
+                return await message.reply({ embeds: [embed] });
+            }
+        }
+
+        // Fallback to @discordjs/voice
+        const player = global.audioPlayers.get(message.guild.id);
+        if (!player) {
+            const embed = new EmbedBuilder()
+                .setDescription('❌ Audio player नहीं मिला!')
+                .setColor(config.COLORS.ERROR);
+            return await message.reply({ embeds: [embed] });
+        }
+        
+        if (player.state.status === AudioPlayerStatus.Paused) {
+            player.unpause();
+            const embed = new EmbedBuilder()
+                .setTitle(`${config.EMOJIS.PLAY} Music Resumed`)
+                .setDescription('▶️ Music को resume कर दिया!')
+                .setColor(config.COLORS.SUCCESS);
+            await message.reply({ embeds: [embed] });
+        } else {
+            const embed = new EmbedBuilder()
+                .setDescription('❌ Music pause में नहीं है!')
+                .setColor(config.COLORS.WARNING);
+            await message.reply({ embeds: [embed] });
+        }
+    } catch (error) {
+        console.error('Resume command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription('❌ Resume करने में error हुई!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Volume command handler
+async function handleVolumeCommand(message, args, guildSettings) {
+    const queue = getQueue(message.guild.id);
+    
+    // Voice channel validation
+    const channelCheck = checkSameVoiceChannel(message);
+    if (!channelCheck.valid) {
+        const embed = new EmbedBuilder()
+            .setDescription(channelCheck.error)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    if (!queue.nowPlaying) {
+        const embed = new EmbedBuilder()
+            .setDescription('❌ कोई गाना play नहीं हो रहा है!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    // Get current volume (default to 50 if not set)
+    const currentVolume = queue.volume || 50;
+    
+    if (!args.length) {
+        const embed = new EmbedBuilder()
+            .setTitle('🔊 Current Volume')
+            .setDescription(`Current volume: **${Math.round(currentVolume)}%**\nUsage: \`${guildSettings.prefix}volume <0-100>\``)
+            .setColor(config.COLORS.INFO);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    const volume = parseInt(args[0]);
+    if (isNaN(volume) || volume < 0 || volume > 100) {
+        const embed = new EmbedBuilder()
+            .setDescription('❌ Volume 0-100 के बीच होना चाहिए!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    try {
+        // Store volume in queue
+        queue.volume = volume;
+        
+        // Try Lavalink first
+        if (lavalinkAvailable && lavalinkManager) {
+            const player = lavalinkManager.getPlayer(message.guild.id);
+            if (player) {
+                await player.setVolume(volume);
+                const embed = new EmbedBuilder()
+                    .setTitle(`${config.EMOJIS.VOLUME} Volume Updated`)
+                    .setDescription(`🔊 Volume को ${volume}% set कर दिया!`)
+                    .setColor(config.COLORS.SUCCESS);
+                return await message.reply({ embeds: [embed] });
+            }
+        }
+
+        // Fallback to @discordjs/voice
+        const player = global.audioPlayers.get(message.guild.id);
+        if (player && player.state.resource) {
+            const volumeDecimal = volume / 100;
+            player.state.resource.volume?.setVolume(volumeDecimal);
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle(`${config.EMOJIS.VOLUME} Volume Updated`)
+            .setDescription(`🔊 Volume को ${volume}% set कर दिया!`)
+            .setColor(config.COLORS.SUCCESS);
+        await message.reply({ embeds: [embed] });
+    } catch (error) {
+        console.error('Volume command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription('❌ Volume set करने में error हुई!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Join command handler
+async function handleJoinCommand(message, guildSettings) {
+    const { joinVoiceChannel, VoiceConnectionStatus } = require('@discordjs/voice');
+    
+    if (!message.member.voice.channel) {
+        const embed = new EmbedBuilder()
+            .setDescription('❌ आपको पहले किसी voice channel में join करना होगा!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    const voiceChannel = message.member.voice.channel;
+    const permissions = voiceChannel.permissionsFor(message.client.user);
+    
+    if (!permissions.has('Connect') || !permissions.has('Speak')) {
+        const embed = new EmbedBuilder()
+            .setDescription('❌ मुझे voice channel में जाने की permission नहीं है!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    try {
+        // Try Lavalink first
+        if (lavalinkAvailable && lavalinkManager) {
+            let player = lavalinkManager.getPlayer(message.guild.id);
+            if (!player) {
+                player = lavalinkManager.createPlayer({
+                    guildId: message.guild.id,
+                    voiceChannelId: voiceChannel.id,
+                    textChannelId: message.channel.id,
+                    selfDeaf: true,
+                    volume: guildSettings.volume || 50
+                });
+            }
+            await player.connect();
+            
+            const embed = new EmbedBuilder()
+                .setTitle(`${config.EMOJIS.SUCCESS} Joined Voice Channel`)
+                .setDescription(`🎵 **${voiceChannel.name}** में join हो गया! (Lavalink Mode)`)
+                .setColor(config.COLORS.SUCCESS);
+            return await message.reply({ embeds: [embed] });
+        }
+
+        // Fallback to @discordjs/voice
+        const connection = joinVoiceChannel({
+            channelId: voiceChannel.id,
+            guildId: message.guild.id,
+            adapterCreator: message.guild.voiceAdapterCreator,
+        });
+
+        // Subscribe the audio player to the voice connection
+        const player = global.createGuildAudioPlayer(message.guild.id);
+        connection.subscribe(player);
+        
+        global.connections.set(message.guild.id, connection);
+
+        connection.on(VoiceConnectionStatus.Ready, () => {
+            console.log(`[${message.guild.id}] Voice connection ready`);
+        });
+
+        const embed = new EmbedBuilder()
+            .setTitle(`${config.EMOJIS.SUCCESS} Joined Voice Channel`)
+            .setDescription(`🎵 **${voiceChannel.name}** में join हो गया! (Fallback Mode)`)
+            .setColor(config.COLORS.SUCCESS);
+        await message.reply({ embeds: [embed] });
+    } catch (error) {
+        console.error('Voice connection error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription('❌ Voice channel join करने में error हुई!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Leave command handler
+async function handleLeaveCommand(message, guildSettings) {
+    const { getVoiceConnection, VoiceConnectionStatus } = require('@discordjs/voice');
+    const guildId = message.guild.id;
+    
+    // Voice channel validation
+    const channelCheck = checkSameVoiceChannel(message);
+    if (!channelCheck.valid) {
+        const embed = new EmbedBuilder()
+            .setDescription(channelCheck.error)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    try {
+        let disconnected = false;
+        
+        // Try Lavalink first
+        if (lavalinkAvailable && lavalinkManager) {
+            const player = lavalinkManager.getPlayer(guildId);
+            if (player) {
+                await player.destroy();
+                disconnected = true;
+                console.log(`🚪 Lavalink player destroyed in guild ${guildId}`);
+            }
+        }
+        
+        // Handle @discordjs/voice connections
+        const connection = getVoiceConnection(guildId);
+        const fallbackPlayer = global.audioPlayers?.get(guildId);
+        
+        if (fallbackPlayer) {
+            fallbackPlayer.stop();
+            global.audioPlayers.delete(guildId);
+            disconnected = true;
+        }
+        
+        if (connection) {
+            try {
+                if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
+                    connection.destroy();
+                }
+                global.connections?.delete(guildId);
+                disconnected = true;
+            } catch (error) {
+                console.log(`Leave command cleanup warning: ${error.message}`);
+                global.connections?.delete(guildId);
+            }
+        }
+        
+        // Clear queue
+        const queue = global.queues?.get(guildId);
+        if (queue) {
+            queue.clear();
+            global.queues.delete(guildId);
+        }
+        
+        if (!disconnected) {
+            const embed = new EmbedBuilder()
+                .setDescription('❌ मैं किसी voice channel में नहीं हूं!')
+                .setColor(config.COLORS.ERROR);
+            return await message.reply({ embeds: [embed] });
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle(`${config.EMOJIS.SUCCESS} Successfully Disconnected`)
+            .setDescription('👋 Voice channel से disconnect हो गया!')
+            .setColor(config.COLORS.SUCCESS)
+            .setFooter({ text: 'Queue cleared and music stopped' })
+            .setTimestamp();
+
+        await message.reply({ embeds: [embed] });
+        console.log(`🚪 Bot left voice channel in guild ${guildId}`);
+
+    } catch (error) {
+        console.error('Leave command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription('⚠️ Disconnect करने में problem हुई, लेकिन bot को manually cleanup कर दिया!')
+            .setColor(config.COLORS.WARNING);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
 module.exports = {
     handlePlayCommand,
     handleSkipCommand,
@@ -395,5 +798,10 @@ module.exports = {
     handleQueueCommand,
     handleStatusCommand,
     handleHelpCommand,
+    handlePauseCommand,
+    handleResumeCommand,
+    handleVolumeCommand,
+    handleJoinCommand,
+    handleLeaveCommand,
     handleFallbackSearch
 };

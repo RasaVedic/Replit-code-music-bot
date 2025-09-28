@@ -8,6 +8,15 @@ Preferred communication style: Simple, everyday language.
 
 # Recent Changes (September 28, 2025)
 
+**🏗️ Project Restructuring & Organization:**
+- Completely reorganized project structure with proper directory architecture
+- Moved core files to organized directories: `src/`, `utils/`, `scripts/`
+- Cleaned up root directory from clutter and random timestamp files
+- Fixed security issues by removing database files from version control
+- Added comprehensive .gitignore for better project management
+- Fixed missing command handlers (handleLoopCommand, handleClearCommand)
+
+**🎵 Previous Enhancements:**
 - Added prefix command support with shortcuts (!p, !s, !v, etc.)
 - Integrated Spotify API for Spotify URL and playlist support
 - Added SoundCloud streaming capabilities
@@ -20,7 +29,17 @@ Preferred communication style: Simple, everyday language.
 # System Architecture
 
 ## Bot Architecture
-The application follows a dual command architecture supporting both Discord.js slash commands and traditional prefix commands (!). The main entry point (`index.js`) initializes the Discord client with necessary intents for guild, voice state, and message interactions. Commands are implemented both as modular files in the `commands` directory and as inline prefix command handlers.
+The application follows a dual command architecture supporting both Discord.js slash commands and traditional prefix commands (!). The main entry point (`index.js`) initializes the Discord client with necessary intents for guild, voice state, and message interactions. 
+
+**📁 Project Structure:**
+- `src/` - Core application modules (database.js, spotify.js)  
+- `utils/` - Utility modules (health.js)
+- `scripts/youtube/` - YouTube player scripts with proper naming
+- `commands/` - Slash command modules
+- `config/` - Bot configuration files
+- Root directory - Main entry point and configuration files only
+
+Commands are implemented both as modular files in the `commands/` directory and as inline prefix command handlers with complete error handling and security fixes.
 
 ## Music System Design
 The core music functionality is built around an enhanced guild-specific queue system using JavaScript Maps for data storage. Each guild has its own `MusicQueue` instance that manages songs, playback state, volume, loop settings, autoplay, shuffle mode, and playback history. The system supports multiple audio sources with intelligent fallback mechanisms.

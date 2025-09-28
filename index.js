@@ -1357,6 +1357,80 @@ async function handleShuffleCommand(message, guildSettings) {
     }
 }
 
+// Loop Command
+async function handleLoopCommand(message, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    
+    try {
+        const queue = getQueue(message.guild.id);
+        
+        if (!queue || !queue.nowPlaying) {
+            const embed = new EmbedBuilder()
+                .setDescription(lang === 'hi' 
+                    ? '📭 कोई गाना play नहीं हो रहा है!'
+                    : '📭 No music is currently playing!')
+                .setColor(config.COLORS.ERROR);
+            return await message.reply({ embeds: [embed] });
+        }
+
+        queue.loop = !queue.loop;
+        
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? `${queue.loop ? '🔂 Loop ON' : '➡️ Loop OFF'} हो गया!`
+                : `${queue.loop ? '🔂 Loop ON' : '➡️ Loop OFF'}!`)
+            .setColor(queue.loop ? config.COLORS.SUCCESS : config.COLORS.ERROR);
+        
+        await message.reply({ embeds: [embed] });
+
+    } catch (error) {
+        console.error('Loop command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? '⚠️ Loop toggle करने में problem हुई!'
+                : '⚠️ Failed to toggle loop!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Clear Command
+async function handleClearCommand(message, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    
+    try {
+        const queue = getQueue(message.guild.id);
+        
+        if (!queue || queue.isEmpty()) {
+            const embed = new EmbedBuilder()
+                .setDescription(lang === 'hi' 
+                    ? '📭 Queue already empty है!'
+                    : '📭 Queue is already empty!')
+                .setColor(config.COLORS.ERROR);
+            return await message.reply({ embeds: [embed] });
+        }
+
+        queue.clearQueue();
+        
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? '🗑️ Queue clear हो गया!'
+                : '🗑️ Queue cleared!')
+            .setColor(config.COLORS.SUCCESS);
+        
+        await message.reply({ embeds: [embed] });
+
+    } catch (error) {
+        console.error('Clear command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? '⚠️ Queue clear करने में problem हुई!'
+                : '⚠️ Failed to clear queue!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
 async function handleButtonInteraction(interaction, guildSettings) {
     const lang = guildSettings.language || 'hi';
     const messages = config.MESSAGES[lang];

@@ -28,14 +28,16 @@ RUN addgroup -g 1001 -S nodejs && \
 
 # Change ownership of app directory
 RUN chown -R discord:nodejs /app
+
+# Switch to non-root user
 USER discord
 
 # Expose port (if using health check server)
 EXPOSE 3000
 
-# Health check
+# Health check (uses PORT environment variable for Render compatibility)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:3000/health || exit 1
+    CMD sh -c 'curl -fsS http://127.0.0.1:${PORT:-3000}/health || exit 1'
 
 # Start the application
 CMD ["node", "index.js"]

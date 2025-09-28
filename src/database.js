@@ -1,11 +1,41 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
-// Create database connection
-const db = new Database(path.join(__dirname, 'ragabot.db'));
+// Get database path from environment variable or use default
+const dbPath = process.env.DB_PATH || path.join(__dirname, 'ragabot.db');
+
+// Ensure directory exists for persistent storage
+const dbDir = path.dirname(dbPath);
+if (!fs.existsSync(dbDir)) {
+    try {
+        fs.mkdirSync(dbDir, { recursive: true });
+        console.log(`📁 Created database directory: ${dbDir}`);
+    } catch (error) {
+        console.error(`❌ Failed to create database directory: ${error.message}`);
+        process.exit(1);
+    }
+}
+
+// Create database connection with error handling
+let db;
+try {
+    db = new Database(dbPath);
+    console.log(`📊 Database initialized at: ${dbPath}`);
+    
+    // Test actual write permissions
+    db.pragma('user_version = 1');
+    const version = db.pragma('user_version');
+    console.log(`✅ Database write permissions verified (version: ${version})`);
+} catch (error) {
+    console.error(`❌ Database initialization failed: ${error.message}`);
+    console.error(`Check permissions for path: ${dbPath}`);
+    process.exit(1);
+}
 
 // Initialize tables
 function initDatabase() {
+    try {
     // Guild settings table
     db.exec(`
         CREATE TABLE IF NOT EXISTS guild_settings (
@@ -44,6 +74,10 @@ function initDatabase() {
     
     // Initialize prepared statements after tables are created
     initPreparedStatements();
+    } catch (error) {
+        console.error(`❌ Database table initialization failed: ${error.message}`);
+        process.exit(1);
+    }
 }
 
 // Initialize prepared statements after tables are created

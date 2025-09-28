@@ -10,16 +10,12 @@ services:
         value: production
       - key: DISCORD_TOKEN
         sync: false
-      - key: LAVALINK_HOST
-        value: localhost
-      - key: LAVALINK_PORT
-        value: 2333
-      - key: LAVALINK_PASSWORD
-        value: youshallnotpass
       - key: CLIENT_ID
         sync: false
       - key: BOT_NAME
         value: EchoTune
+      - key: DB_PATH
+        value: /app/data/ragabot.db
     buildCommand: npm ci
     startCommand: node index.js
     autoDeploy: true

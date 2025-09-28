@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  discord-bot:
+    build: .
+    container_name: echotune-bot
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - CLIENT_ID=${CLIENT_ID}
+      - LAVALINK_HOST=lavalink
+      - LAVALINK_PORT=2333
+      - LAVALINK_PASSWORD=youshallnotpass
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - lavalink
+    networks:
+      - bot-network
+
+  lavalink:
+    image: fredboat/lavalink:dev
+    container_name: lavalink-server
+    restart: unless-stopped
+    ports:
+      - "2333:2333"
+    volumes:
+      - ./lavalink.yml:/opt/Lavalink/application.yml
+    networks:
+      - bot-network
+
+networks:
+  bot-network:
+    driver: bridge
+
+volumes:
+  bot-data:
+    driver: local

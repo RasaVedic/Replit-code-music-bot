@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: discord-music-bot
+    env: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: LAVALINK_HOST
+        value: localhost
+      - key: LAVALINK_PORT
+        value: 2333
+      - key: LAVALINK_PASSWORD
+        value: youshallnotpass
+      - key: CLIENT_ID
+        sync: false
+      - key: BOT_NAME
+        value: EchoTune
+    buildCommand: npm ci
+    startCommand: node index.js
+    autoDeploy: true
+    region: oregon
+    numInstances: 1
+    disk:
+      name: bot-data
+      mountPath: /app/data
+      sizeGB: 1

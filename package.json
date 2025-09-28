@@ -15,6 +15,7 @@
     "@distube/ytdl-core": "^4.16.12",
     "discord.js": "^14.22.1",
     "opusscript": "^0.0.8",
+    "play-dl": "^1.9.7",
     "tweetnacl": "^1.0.3",
     "youtube-sr": "^4.3.12"
   }

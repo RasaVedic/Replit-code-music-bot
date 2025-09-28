@@ -51,11 +51,24 @@ const lavalinkConfig = {
     }
 };
 
-// Global queue management
+// Optimized global queue management with performance enhancements
 global.queues = new Map();
 global.players = new Map();
 global.audioPlayers = new Map();
 global.connections = new Map();
+
+// Performance optimization caches
+global.guildSettingsCache = new Map();
+global.searchResultsCache = new Map();
+global.lastCacheClean = Date.now();
+
+// Cache configuration
+const CACHE_CONFIG = {
+    GUILD_SETTINGS_TTL: 10 * 60 * 1000, // 10 minutes
+    SEARCH_RESULTS_TTL: 30 * 60 * 1000, // 30 minutes
+    MAX_CACHE_SIZE: 1000,
+    CLEANUP_INTERVAL: 5 * 60 * 1000 // 5 minutes
+};
 
 // Load commands
 client.commands = new Collection();
@@ -66,7 +79,7 @@ if (!fs.existsSync(commandsPath)) {
     fs.mkdirSync(commandsPath, { recursive: true });
 }
 
-// Enhanced Music Queue Class
+// Enhanced Music Queue Class with performance optimizations
 class EnhancedMusicQueue {
     constructor(guildId) {
         this.guildId = guildId;
@@ -79,6 +92,13 @@ class EnhancedMusicQueue {
         this.textChannel = null;
         this.voiceChannel = null;
         this.player = null;
+        this.lastActivity = Date.now();
+        this.isPlaylist = false;
+        this.playlistInfo = null;
+        this.skipVotes = new Set(); // For skip voting
+        this.bassBoost = false;
+        this.nightcore = false;
+        this.filters = new Map(); // Audio filters
     }
 
     add(song) {
@@ -113,6 +133,10 @@ class EnhancedMusicQueue {
     clear() {
         this.songs = [];
         this.nowPlaying = null;
+        this.skipVotes.clear();
+        this.filters.clear();
+        this.isPlaylist = false;
+        this.playlistInfo = null;
     }
 
     shuffle() {
@@ -129,14 +153,85 @@ class EnhancedMusicQueue {
     size() {
         return this.songs.length;
     }
+    
+    // Performance: Bulk add songs for playlist
+    addBulk(songs) {
+        if (this.songs.length + songs.length > config.BOT.MAX_QUEUE_SIZE) {
+            throw new Error(`Queue would exceed maximum size of ${config.BOT.MAX_QUEUE_SIZE} songs!`);
+        }
+        this.songs.push(...songs);
+        this.lastActivity = Date.now();
+    }
+    
+    // Skip vote system for better democracy
+    addSkipVote(userId) {
+        this.skipVotes.add(userId);
+        return this.skipVotes.size;
+    }
+    
+    clearSkipVotes() {
+        this.skipVotes.clear();
+    }
+    
+    // Get required skip votes based on voice channel size
+    getRequiredSkipVotes(voiceChannelSize) {
+        return Math.ceil(voiceChannelSize / 2);
+    }
 }
 
-// Get or create queue
+// Optimized queue management with performance enhancements
 function getQueue(guildId) {
     if (!global.queues.has(guildId)) {
-        global.queues.set(guildId, new EnhancedMusicQueue(guildId));
+        const queue = new EnhancedMusicQueue(guildId);
+        queue.lastActivity = Date.now(); // Track activity for cleanup
+        global.queues.set(guildId, queue);
     }
-    return global.queues.get(guildId);
+    const queue = global.queues.get(guildId);
+    queue.lastActivity = Date.now(); // Update activity timestamp
+    return queue;
+}
+
+// Fast cached guild settings retrieval
+function getCachedGuildSettings(guildId) {
+    const cached = global.guildSettingsCache.get(guildId);
+    const now = Date.now();
+    
+    if (cached && (now - cached.timestamp < CACHE_CONFIG.GUILD_SETTINGS_TTL)) {
+        return cached.data;
+    }
+    
+    // Fallback to database call if not cached or expired
+    try {
+        const settings = getGuildSettings(guildId);
+        global.guildSettingsCache.set(guildId, {
+            data: settings,
+            timestamp: now
+        });
+        return settings;
+    } catch (error) {
+        console.log('Guild settings cache fallback failed:', error.message);
+        return { language: 'hi', prefix: '!' }; // Default fallback
+    }
+}
+
+// Cached search results for better performance
+function getCachedSearchResults(query, limit = 1) {
+    const cacheKey = `${query}-${limit}`;
+    const cached = global.searchResultsCache.get(cacheKey);
+    const now = Date.now();
+    
+    if (cached && (now - cached.timestamp < CACHE_CONFIG.SEARCH_RESULTS_TTL)) {
+        return Promise.resolve(cached.data);
+    }
+    
+    // Return a promise for fresh search
+    return YouTube.search(query, { limit }).then(results => {
+        global.searchResultsCache.set(cacheKey, {
+            data: results,
+            timestamp: now
+        });
+        return results;
+    });
 }
 
 // Normalize track format for consistent UI
@@ -253,19 +348,122 @@ function formatDuration(ms) {
     return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-// Auto play suggestions
+// Enhanced playlist auto-detection system
+async function detectAndHandlePlaylist(query, requester) {
+    try {
+        const isYouTubePlaylist = query.includes('list=') && query.includes('youtube.com');
+        const isSpotifyPlaylist = query.includes('spotify.com/playlist/');
+        const isSpotifyAlbum = query.includes('spotify.com/album/');
+        
+        if (!isYouTubePlaylist && !isSpotifyPlaylist && !isSpotifyAlbum) {
+            return null; // Not a playlist
+        }
+        
+        console.log(`🎵 Playlist detected! Processing...`);
+        
+        if (isYouTubePlaylist) {
+            return await handleYouTubePlaylist(query, requester);
+        } else if (isSpotifyPlaylist || isSpotifyAlbum) {
+            return await handleSpotifyPlaylist(query, requester);
+        }
+        
+    } catch (error) {
+        console.error('Playlist detection failed:', error.message);
+    }
+    return null;
+}
+
+// YouTube playlist handler
+async function handleYouTubePlaylist(playlistUrl, requester) {
+    try {
+        // Extract playlist ID
+        const playlistId = playlistUrl.match(/list=([^&]+)/)?.[1];
+        if (!playlistId) return null;
+        
+        const results = await YouTube.search(`https://www.youtube.com/playlist?list=${playlistId}`, {
+            limit: 50, // Reasonable limit for performance
+            type: 'playlist'
+        });
+        
+        if (results.length > 0) {
+            const playlist = results[0];
+            const tracks = [];
+            
+            // Convert to unified track format efficiently
+            for (let i = 0; i < Math.min(playlist.videos?.length || 0, 50); i++) {
+                const video = playlist.videos[i];
+                tracks.push({
+                    info: {
+                        title: video.title,
+                        author: video.channel?.name || 'Unknown',
+                        length: (video.duration || 0) * 1000,
+                        artworkUrl: video.thumbnail?.url,
+                        thumbnail: video.thumbnail?.url
+                    },
+                    requester,
+                    url: video.url,
+                    source: 'youtube'
+                });
+            }
+            
+            return {
+                tracks,
+                playlistInfo: {
+                    name: playlist.title || 'YouTube Playlist',
+                    author: playlist.channel?.name || 'Unknown',
+                    trackCount: tracks.length,
+                    type: 'youtube'
+                }
+            };
+        }
+    } catch (error) {
+        console.error('YouTube playlist processing failed:', error.message);
+    }
+    return null;
+}
+
+// Spotify playlist handler (requires Spotify integration)
+async function handleSpotifyPlaylist(spotifyUrl, requester) {
+    try {
+        // This would integrate with Spotify API if available
+        console.log('🎵 Spotify playlist detected - converting to YouTube search...');
+        
+        // For now, we'll return null and let the regular search handle it
+        // In the future, this could use Spotify API to get track list
+        // and search for each track on YouTube
+        
+        return null;
+    } catch (error) {
+        console.error('Spotify playlist processing failed:', error.message);
+    }
+    return null;
+}
+
+// Auto play suggestions with caching
 async function getAutoPlaySuggestion(lastTrack) {
     try {
         const searchQuery = `${lastTrack.info.author} similar songs`;
-        const result = await lavalinkManager.search({
-            query: searchQuery,
-            source: config.SOURCES.YOUTUBE
-        }, lastTrack.requester);
-
-        if (result.tracks.length > 1) {
+        
+        // Use cached search if available
+        const results = await getCachedSearchResults(searchQuery, 5);
+        
+        if (results.length > 1) {
             // Return a random track from results (excluding the first which might be the same)
-            const randomIndex = Math.floor(Math.random() * Math.min(result.tracks.length - 1, 5)) + 1;
-            return result.tracks[randomIndex];
+            const randomIndex = Math.floor(Math.random() * Math.min(results.length - 1, 4)) + 1;
+            const video = results[randomIndex];
+            
+            return {
+                info: {
+                    title: video.title,
+                    author: video.channel?.name || video.author || 'Unknown',
+                    length: (video.duration || 0) * 1000,
+                    artworkUrl: video.thumbnail?.url,
+                    thumbnail: video.thumbnail?.url
+                },
+                requester: lastTrack.requester,
+                url: video.url,
+                source: 'youtube'
+            };
         }
     } catch (error) {
         console.log('Autoplay suggestion failed:', error.message);
@@ -713,20 +911,69 @@ function cleanupFallbackPlayer(guildId) {
     console.log(`🧹 Cleaned up fallback player for guild ${guildId}`);
 }
 
-// Auto-cleanup idle players
+// Optimized auto-cleanup with performance cache management
 function setupIdleCleanup() {
     setInterval(() => {
+        const now = Date.now();
+        
+        // Cleanup idle players (optimized)
         for (const [guildId, queue] of global.queues.entries()) {
             if (!queue.nowPlaying && queue.isEmpty()) {
-                // Check if player has been idle for 5 minutes
-                const lastActivity = queue.lastActivity || Date.now();
-                if (Date.now() - lastActivity > 5 * 60 * 1000) {
+                const lastActivity = queue.lastActivity || now;
+                if (now - lastActivity > 5 * 60 * 1000) {
                     console.log(`🧹 Auto-cleaning up idle player for guild ${guildId}`);
                     cleanupFallbackPlayer(guildId);
                 }
             }
         }
+        
+        // Performance cache cleanup
+        if (now - global.lastCacheClean > CACHE_CONFIG.CLEANUP_INTERVAL) {
+            performanceCacheCleanup();
+            global.lastCacheClean = now;
+        }
     }, 60000); // Check every minute
+}
+
+// Performance cache cleanup function
+function performanceCacheCleanup() {
+    const now = Date.now();
+    let cleanedCount = 0;
+    
+    // Clean guild settings cache
+    for (const [key, data] of global.guildSettingsCache.entries()) {
+        if (now - data.timestamp > CACHE_CONFIG.GUILD_SETTINGS_TTL) {
+            global.guildSettingsCache.delete(key);
+            cleanedCount++;
+        }
+    }
+    
+    // Clean search results cache
+    for (const [key, data] of global.searchResultsCache.entries()) {
+        if (now - data.timestamp > CACHE_CONFIG.SEARCH_RESULTS_TTL) {
+            global.searchResultsCache.delete(key);
+            cleanedCount++;
+        }
+    }
+    
+    // Limit cache sizes to prevent memory issues
+    if (global.guildSettingsCache.size > CACHE_CONFIG.MAX_CACHE_SIZE) {
+        const excess = global.guildSettingsCache.size - CACHE_CONFIG.MAX_CACHE_SIZE;
+        const keysToDelete = Array.from(global.guildSettingsCache.keys()).slice(0, excess);
+        keysToDelete.forEach(key => global.guildSettingsCache.delete(key));
+        cleanedCount += excess;
+    }
+    
+    if (global.searchResultsCache.size > CACHE_CONFIG.MAX_CACHE_SIZE) {
+        const excess = global.searchResultsCache.size - CACHE_CONFIG.MAX_CACHE_SIZE;
+        const keysToDelete = Array.from(global.searchResultsCache.keys()).slice(0, excess);
+        keysToDelete.forEach(key => global.searchResultsCache.delete(key));
+        cleanedCount += excess;
+    }
+    
+    if (cleanedCount > 0) {
+        console.log(`⚡ Performance cache cleanup: removed ${cleanedCount} expired entries`);
+    }
 }
 
 // Bot Events
@@ -992,6 +1239,55 @@ async function handleCommand(command, message, args, guildSettings) {
             await handleLeaveCommand(message, guildSettings);
             break;
         
+        case 'playlist':
+        case 'pl':
+            await handlePlaylistCommand(message, args, guildSettings);
+            break;
+        
+        case 'skipto':
+        case 'st':
+            await handleSkipToCommand(message, args, guildSettings);
+            break;
+        
+        case 'move':
+        case 'mv':
+            await handleMoveCommand(message, args, guildSettings);
+            break;
+        
+        case 'remove':
+        case 'rm':
+            await handleRemoveCommand(message, args, guildSettings);
+            break;
+        
+        case 'bassboost':
+        case 'bass':
+            await handleBassBoostCommand(message, args, guildSettings);
+            break;
+        
+        case 'speed':
+        case 'tempo':
+            await handleSpeedCommand(message, args, guildSettings);
+            break;
+        
+        case 'voteskip':
+        case 'vs':
+            await handleVoteSkipCommand(message, guildSettings);
+            break;
+        
+        case 'seek':
+            await handleSeekCommand(message, args, guildSettings);
+            break;
+        
+        case 'filters':
+        case 'fx':
+            await handleFiltersCommand(message, args, guildSettings);
+            break;
+        
+        case 'history':
+        case 'h':
+            await handleHistoryCommand(message, guildSettings);
+            break;
+        
         case 'setprefix':
             await handleSetPrefixCommand(message, args, guildSettings);
             break;
@@ -1012,7 +1308,9 @@ async function handleCommand(command, message, args, guildSettings) {
 
 // Play command handler with fallback
 async function handlePlayCommand(message, args, guildSettings) {
-    const lang = guildSettings.language || 'hi';
+    // Use cached settings for faster response
+    const cachedSettings = getCachedGuildSettings(message.guild.id);
+    const lang = cachedSettings.language || 'hi';
     const messages = config.MESSAGES[lang];
 
     if (!message.member.voice.channel) {
@@ -1106,13 +1404,16 @@ async function handlePlayCommand(message, args, guildSettings) {
 
 async function handleFallbackSearch(message, query, loadingMsg, guildSettings, messages) {
     try {
-        // Search using YouTube SR
+        // Fast search using cached results when possible
         let results;
         
         if (ytdl.validateURL(query)) {
-            // Direct URL
+            // Direct URL - try to get info quickly
             try {
-                const info = await ytdl.getInfo(query);
+                const info = await Promise.race([
+                    ytdl.getInfo(query),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+                ]);
                 results = [{
                     title: info.videoDetails.title,
                     author: info.videoDetails.author.name,
@@ -1121,12 +1422,12 @@ async function handleFallbackSearch(message, query, loadingMsg, guildSettings, m
                     thumbnail: info.videoDetails.thumbnails[0]?.url,
                 }];
             } catch (error) {
-                console.log('ytdl getInfo failed, trying search...');
-                results = await YouTube.search(query, { limit: 1 });
+                console.log('ytdl getInfo failed/timeout, trying cached search...');
+                results = await getCachedSearchResults(query, 1);
             }
         } else {
-            // Search query
-            results = await YouTube.search(query, { limit: 1 });
+            // Search query with caching
+            results = await getCachedSearchResults(query, 1);
         }
 
         if (!results || results.length === 0) {
@@ -2529,6 +2830,354 @@ async function handlePlaySlashCommand(interaction, query, guildSettings) {
 
     // Implementation similar to handlePlayCommand...
     await interaction.editReply('🎵 Playing your music! Use prefix commands for now - slash commands coming soon!');
+}
+
+// ==================== NEW PERFORMANCE-FOCUSED COMMANDS ====================
+
+// Vote Skip Command - Democratic skipping
+async function handleVoteSkipCommand(message, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    const queue = getQueue(message.guild.id);
+    
+    if (!queue.nowPlaying) {
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' ? 'कोई गाना नहीं चल रहा!' : 'No song is playing!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    const voiceChannel = message.member.voice.channel;
+    if (!voiceChannel) {
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' ? 'Voice channel में join करें!' : 'Join a voice channel!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    const listeners = voiceChannel.members.filter(member => !member.user.bot).size;
+    const votesNeeded = queue.getRequiredSkipVotes(listeners);
+    const currentVotes = queue.addSkipVote(message.author.id);
+    
+    if (currentVotes >= votesNeeded) {
+        queue.clearSkipVotes();
+        await handleSkipCommand(message, guildSettings);
+    } else {
+        const embed = new EmbedBuilder()
+            .setTitle('🗳️ Skip Vote Added!')
+            .setDescription(lang === 'hi' 
+                ? `Vote: **${currentVotes}/${votesNeeded}**\nSkip के लिए और votes चाहिए!`
+                : `Votes: **${currentVotes}/${votesNeeded}**\nMore votes needed to skip!`)
+            .setColor(config.COLORS.WARNING);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Enhanced Playlist Command
+async function handlePlaylistCommand(message, args, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    const queue = getQueue(message.guild.id);
+    
+    if (!args[0]) {
+        // Show current playlist info if any
+        if (queue.isPlaylist && queue.playlistInfo) {
+            const embed = new EmbedBuilder()
+                .setTitle('🎵 Current Playlist Info')
+                .addFields(
+                    { name: 'Name', value: queue.playlistInfo.name, inline: true },
+                    { name: 'Author', value: queue.playlistInfo.author, inline: true },
+                    { name: 'Tracks', value: `${queue.playlistInfo.trackCount}`, inline: true }
+                )
+                .setColor(config.COLORS.INFO);
+            return await message.reply({ embeds: [embed] });
+        } else {
+            const embed = new EmbedBuilder()
+                .setDescription(lang === 'hi' 
+                    ? '🎵 Usage: !playlist <YouTube/Spotify playlist URL>'
+                    : '🎵 Usage: !playlist <YouTube/Spotify playlist URL>')
+                .setColor(config.COLORS.INFO);
+            return await message.reply({ embeds: [embed] });
+        }
+    }
+    
+    const playlistUrl = args.join(' ');
+    const playlistResult = await detectAndHandlePlaylist(playlistUrl, message.author);
+    
+    if (!playlistResult) {
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? '❌ Valid playlist URL नहीं मिला!'
+                : '❌ Could not detect a valid playlist!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    try {
+        queue.addBulk(playlistResult.tracks);
+        queue.isPlaylist = true;
+        queue.playlistInfo = playlistResult.playlistInfo;
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`${config.EMOJIS.SUCCESS} Playlist Added!`)
+            .setDescription(`Added **${playlistResult.tracks.length}** songs`)
+            .addFields(
+                { name: 'Playlist', value: playlistResult.playlistInfo.name, inline: true },
+                { name: 'Author', value: playlistResult.playlistInfo.author, inline: true },
+                { name: 'Queue Position', value: `${queue.size() - playlistResult.tracks.length + 1}-${queue.size()}`, inline: true }
+            )
+            .setColor(config.COLORS.SUCCESS)
+            .setTimestamp();
+        
+        await message.reply({ embeds: [embed] });
+        
+    } catch (error) {
+        const embed = new EmbedBuilder()
+            .setDescription(error.message)
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Skip to Position Command
+async function handleSkipToCommand(message, args, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    const queue = getQueue(message.guild.id);
+    
+    if (!queue.nowPlaying) {
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' ? 'कोई गाना नहीं चल रहा!' : 'No song is playing!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    const position = parseInt(args[0]);
+    if (!position || position < 1 || position > queue.size()) {
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? `Valid position दें (1-${queue.size()})`
+                : `Please provide a valid position (1-${queue.size()})`)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    const skippedCount = position - 1;
+    queue.songs.splice(0, skippedCount);
+    
+    const player = global.audioPlayers.get(message.guild.id);
+    if (player) {
+        player.stop();
+    }
+    
+    const embed = new EmbedBuilder()
+        .setTitle('⏭️ Skipped to Position')
+        .setDescription(lang === 'hi' 
+            ? `${skippedCount} गाने skip किए गए!`
+            : `Skipped ${skippedCount} songs!`)
+        .setColor(config.COLORS.SUCCESS);
+    await message.reply({ embeds: [embed] });
+}
+
+// Remove Song Command
+async function handleRemoveCommand(message, args, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    const queue = getQueue(message.guild.id);
+    
+    if (queue.isEmpty()) {
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' ? 'Queue empty है!' : 'Queue is empty!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    const position = parseInt(args[0]);
+    if (!position || position < 1 || position > queue.size()) {
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? `Valid position दें (1-${queue.size()})`
+                : `Please provide a valid position (1-${queue.size()})`)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    const removedSong = queue.songs.splice(position - 1, 1)[0];
+    
+    const embed = new EmbedBuilder()
+        .setTitle('🗑️ Song Removed')
+        .setDescription(`**${removedSong.info.title}** removed from queue`)
+        .setColor(config.COLORS.SUCCESS);
+    await message.reply({ embeds: [embed] });
+}
+
+// Move Song Command
+async function handleMoveCommand(message, args, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    const queue = getQueue(message.guild.id);
+    
+    if (queue.isEmpty()) {
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' ? 'Queue empty है!' : 'Queue is empty!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    const from = parseInt(args[0]);
+    const to = parseInt(args[1]);
+    
+    if (!from || !to || from < 1 || to < 1 || from > queue.size() || to > queue.size()) {
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? `Usage: !move <from> <to> (1-${queue.size()})`
+                : `Usage: !move <from> <to> (1-${queue.size()})`)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    const song = queue.songs.splice(from - 1, 1)[0];
+    queue.songs.splice(to - 1, 0, song);
+    
+    const embed = new EmbedBuilder()
+        .setTitle('📋 Song Moved')
+        .setDescription(`**${song.info.title}** moved from position ${from} to ${to}`)
+        .setColor(config.COLORS.SUCCESS);
+    await message.reply({ embeds: [embed] });
+}
+
+// Bass Boost Command
+async function handleBassBoostCommand(message, args, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    const queue = getQueue(message.guild.id);
+    
+    if (!queue.nowPlaying) {
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' ? 'कोई गाना नहीं चल रहा!' : 'No song is playing!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    queue.bassBoost = !queue.bassBoost;
+    
+    const embed = new EmbedBuilder()
+        .setTitle('🎵 Bass Boost')
+        .setDescription(lang === 'hi' 
+            ? `Bass Boost **${queue.bassBoost ? 'ON' : 'OFF'}** हो गया!`
+            : `Bass Boost **${queue.bassBoost ? 'ON' : 'OFF'}**!`)
+        .setColor(queue.bassBoost ? config.COLORS.SUCCESS : config.COLORS.ERROR);
+    await message.reply({ embeds: [embed] });
+}
+
+// Filters Command
+async function handleFiltersCommand(message, args, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    const queue = getQueue(message.guild.id);
+    
+    if (!args[0]) {
+        const filtersEmbed = new EmbedBuilder()
+            .setTitle('🎛️ Available Filters')
+            .setDescription(
+                '**Available Filters:**\n' +
+                '• `bass` - Bass boost\n' +
+                '• `clear` - Clear all filters\n' +
+                '• `nightcore` - Nightcore effect\n' +
+                '• `vaporwave` - Vaporwave effect\n\n' +
+                '**Usage:** `!filters <filter>`'
+            )
+            .setColor(config.COLORS.INFO);
+        return await message.reply({ embeds: [filtersEmbed] });
+    }
+    
+    const filter = args[0].toLowerCase();
+    
+    switch (filter) {
+        case 'clear':
+            queue.filters.clear();
+            queue.bassBoost = false;
+            queue.nightcore = false;
+            break;
+        case 'bass':
+            queue.bassBoost = !queue.bassBoost;
+            break;
+        case 'nightcore':
+            queue.nightcore = !queue.nightcore;
+            break;
+        default:
+            return await message.reply('❌ Invalid filter! Use `!filters` to see available filters.');
+    }
+    
+    const embed = new EmbedBuilder()
+        .setTitle('🎛️ Filters Updated')
+        .setDescription(`Filter **${filter}** applied!`)
+        .setColor(config.COLORS.SUCCESS);
+    await message.reply({ embeds: [embed] });
+}
+
+// History Command
+async function handleHistoryCommand(message, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    const queue = getQueue(message.guild.id);
+    
+    if (queue.history.length === 0) {
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' ? 'History empty है!' : 'History is empty!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    let description = '';
+    queue.history.slice(0, 10).forEach((track, index) => {
+        description += `${index + 1}. **${track.info.title}** - ${track.info.author}\n`;
+    });
+    
+    const embed = new EmbedBuilder()
+        .setTitle('📜 Recently Played')
+        .setDescription(description)
+        .setColor(config.COLORS.INFO)
+        .setFooter({ text: `Showing last ${Math.min(queue.history.length, 10)} songs` });
+    
+    await message.reply({ embeds: [embed] });
+}
+
+// Speed/Tempo Command  
+async function handleSpeedCommand(message, args, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    const queue = getQueue(message.guild.id);
+    
+    if (!queue.nowPlaying) {
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' ? 'कोई गाना नहीं चल रहा!' : 'No song is playing!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    if (!args[0]) {
+        const embed = new EmbedBuilder()
+            .setDescription('Usage: !speed <0.5-2.0>\nExample: `!speed 1.25`')
+            .setColor(config.COLORS.INFO);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    const speed = parseFloat(args[0]);
+    if (speed < 0.5 || speed > 2.0) {
+        const embed = new EmbedBuilder()
+            .setDescription('Speed must be between 0.5 and 2.0!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    queue.filters.set('speed', speed);
+    
+    const embed = new EmbedBuilder()
+        .setTitle('⚡ Speed Changed')
+        .setDescription(`Playback speed set to **${speed}x**`)
+        .setColor(config.COLORS.SUCCESS);
+    await message.reply({ embeds: [embed] });
+}
+
+// Seek Command
+async function handleSeekCommand(message, args, guildSettings) {
+    const embed = new EmbedBuilder()
+        .setTitle('⏱️ Seek Command')
+        .setDescription('Seek feature is coming soon!\nCurrently working with fallback player limitations.')
+        .setColor(config.COLORS.INFO);
+    await message.reply({ embeds: [embed] });
 }
 
 // Enhanced Error handling

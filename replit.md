@@ -1,40 +1,99 @@
 # Overview
 
-This is a Discord music bot built with Node.js that allows users to play YouTube audio in Discord voice channels. The bot provides comprehensive music functionality including play, pause, resume, skip, stop, queue management, and volume control. It uses Discord.js v14 for Discord API interaction, Discord.js/voice for voice channel functionality, and ytdl-core for YouTube audio streaming. The bot supports Hindi language responses for user interaction.
+This is an advanced Discord music bot built with Node.js that supports multiple music sources including YouTube, Spotify, and SoundCloud. The bot provides comprehensive music functionality with both slash commands and prefix commands (!), interactive button controls, autoplay, queue management, and volume control. It features a modern command-based architecture with fallback systems for reliable music streaming.
 
 # User Preferences
 
 Preferred communication style: Simple, everyday language.
 
+# Recent Changes (September 28, 2025)
+
+- Added prefix command support with shortcuts (!p, !s, !v, etc.)
+- Integrated Spotify API for Spotify URL and playlist support
+- Added SoundCloud streaming capabilities
+- Implemented interactive button controls for quick music management
+- Added autoplay feature for continuous music experience
+- Enhanced queue system with shuffle, history, and advanced controls
+- Fixed YouTube streaming reliability with multiple fallback systems
+- Added comprehensive help system and rich embed displays
+
 # System Architecture
 
 ## Bot Architecture
-The application follows a command-based architecture using Discord.js slash commands. The main entry point (`index.js`) initializes the Discord client with necessary intents for guild, voice state, and message interactions. Commands are modularized into separate files within the `commands` directory and loaded dynamically at startup.
+The application follows a dual command architecture supporting both Discord.js slash commands and traditional prefix commands (!). The main entry point (`index.js`) initializes the Discord client with necessary intents for guild, voice state, and message interactions. Commands are implemented both as modular files in the `commands` directory and as inline prefix command handlers.
 
 ## Music System Design
-The core music functionality is built around a guild-specific queue system using JavaScript Maps for data storage. Each guild has its own `MusicQueue` instance that manages songs, playback state, volume, and loop settings. The system uses Discord.js voice connections and audio players to handle voice channel interaction and audio streaming.
+The core music functionality is built around an enhanced guild-specific queue system using JavaScript Maps for data storage. Each guild has its own `MusicQueue` instance that manages songs, playback state, volume, loop settings, autoplay, shuffle mode, and playback history. The system supports multiple audio sources with intelligent fallback mechanisms.
+
+## Multi-Source Audio Processing
+Audio streaming supports three main sources:
+- **YouTube**: Direct URLs and search queries using ytdl-core and play-dl with fallback
+- **Spotify**: Track and playlist URLs converted to YouTube equivalents via Spotify API
+- **SoundCloud**: Direct streaming using soundcloud-downloader
 
 ## Command Structure
-Commands are implemented as individual modules following Discord's slash command pattern. Each command exports a data object (using SlashCommandBuilder) and an execute function. The bot automatically discovers and registers commands from the `commands` directory, supporting hot-loading of new command files.
+**Slash Commands**: Individual modules in `commands/` directory following Discord's slash command pattern
+**Prefix Commands**: Centralized handler with shortcuts mapping (!p → play, !s → skip, etc.)
+**Interactive Controls**: Button-based controls for pause, skip, volume, queue management
 
-## Audio Processing
-Audio streaming is handled through ytdl-core for YouTube content extraction and Discord.js audio resources for playback. The system creates audio players per guild and manages voice connections with proper error handling and connection state monitoring.
+## Enhanced Queue Management
+- Maximum 100 songs per queue with overflow protection
+- Shuffle functionality with randomization algorithm
+- Loop mode for repeating current track
+- Autoplay system using YouTube's related video suggestions
+- Playback history tracking (last 10 songs)
+- Position tracking and queue navigation
 
 ## State Management
-The bot maintains persistent state through in-memory storage using JavaScript Maps. Music queues, audio players, and voice connections are stored globally and accessed through guild IDs. This approach provides fast access but doesn't persist across bot restarts.
+The bot maintains enhanced persistent state through in-memory storage using JavaScript Maps. Includes music queues, audio players, voice connections, user preferences, and playback statistics. All state is guild-specific and includes advanced features like autoplay settings and shuffle state.
 
 # External Dependencies
 
 ## Core Discord Libraries
-- **discord.js v14**: Primary Discord API interaction and slash command handling
+- **discord.js v14**: Primary Discord API interaction, slash commands, and interactive components
 - **@discordjs/voice**: Voice channel connection, audio player management, and voice state handling
 - **tweetnacl**: Cryptographic library required for Discord voice connections
 
-## Audio Processing
-- **ytdl-core**: YouTube video information extraction and audio stream generation for music playback
+## Audio Processing Libraries
+- **@distube/ytdl-core**: YouTube video information extraction and audio streaming
+- **play-dl**: Alternative YouTube streaming with better reliability
+- **soundcloud-downloader**: SoundCloud track streaming and metadata extraction
+- **youtube-sr**: YouTube search functionality and video information retrieval
+
+## Music Service Integration
+- **@spotify/web-api-ts-sdk**: Spotify Web API integration for track and playlist data
+- **spotify.js**: Custom Spotify integration module using Replit's connector system
 
 ## System Dependencies  
 - **Node.js File System (fs)**: Dynamic command loading and directory management
 - **Node.js Path**: File path resolution for command discovery and loading
 
-The bot requires Discord Bot Token configuration and appropriate Discord application permissions including voice channel access, message sending, and slash command registration.
+# Available Commands
+
+## Prefix Commands (! shortcuts)
+- `!p` / `!play` - Play music from YouTube, Spotify, or SoundCloud
+- `!s` / `!skip` - Skip current track
+- `!st` / `!stop` - Stop playback and clear queue
+- `!ps` / `!pause` - Pause current track
+- `!r` / `!resume` - Resume paused track
+- `!v` / `!volume` - Set volume (1-100)
+- `!q` / `!queue` - Display current queue
+- `!np` / `!nowplaying` - Show current track information
+- `!l` / `!loop` - Toggle loop mode
+- `!sh` / `!shuffle` - Shuffle queue
+- `!ap` / `!autoplay` - Toggle autoplay
+- `!h` / `!help` - Show comprehensive help
+- `!j` / `!join` - Join voice channel
+- `!lv` / `!leave` - Leave voice channel
+
+## Interactive Controls
+- ⏸️ Pause/Resume button
+- ⏭️ Skip track button  
+- ⏹️ Stop and clear queue button
+- 🔀 Shuffle queue button
+- 🔁 Toggle loop button
+- 🎵 Toggle autoplay button
+- 🔊/🔉 Volume up/down buttons
+- 📋 Quick queue display button
+
+The bot requires Discord Bot Token configuration and appropriate Discord application permissions including voice channel access, message sending, slash command registration, and message content intent for prefix commands.

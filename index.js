@@ -530,72 +530,9 @@ client.on('ready', async () => {
     console.log(`🎵 ${client.user.username} music bot is online!`);
     console.log(`📊 Serving ${client.guilds.cache.size} servers`);
 
-    try {
-        // Initialize Lavalink Manager after client is ready
-        lavalinkManager = new LavalinkManager({
-            nodes: [
-                {
-                    authorization: process.env.LAVALINK_PASSWORD || config.LAVALINK.PASSWORD,
-                    host: process.env.LAVALINK_HOST || config.LAVALINK.HOST,
-                    port: parseInt(process.env.LAVALINK_PORT) || config.LAVALINK.PORT,
-                    id: config.LAVALINK.IDENTIFIER,
-                }
-            ],
-            sendToShard: (guildId, payload) => {
-                const guild = client.guilds.cache.get(guildId);
-                if (guild?.shard) {
-                    guild.shard.send(payload);
-                } else if (client.ws) {
-                    client.ws.send(payload);
-                }
-            },
-            autoSkip: true,
-            client: {
-                id: client.user.id,
-                username: client.user.username
-            },
-        });
-
-        // Add comprehensive error handlers for Lavalink
-        lavalinkManager.on('nodeError', (node, error) => {
-            console.error(`❌ Lavalink node error: ${error.message}`);
-            lavalinkAvailable = false;
-        });
-
-        lavalinkManager.on('nodeDisconnect', (node) => {
-            console.log(`🔌 Lavalink node disconnected: ${node.options.id}`);
-            lavalinkAvailable = false;
-        });
-
-        lavalinkManager.on('nodeConnect', (node) => {
-            console.log(`🔗 Lavalink node connected: ${node.options.id}`);
-            lavalinkAvailable = true;
-        });
-
-        lavalinkManager.on('error', (error) => {
-            console.error(`❌ Lavalink manager error: ${error.message}`);
-            lavalinkAvailable = false;
-        });
-
-        // Add NodeManager error handler to prevent ERR_UNHANDLED_ERROR
-        lavalinkManager.nodeManager.on('error', (error) => {
-            console.error(`❌ Lavalink NodeManager error: ${error.message}`);
-            lavalinkAvailable = false;
-        });
-
-        // Initialize Lavalink
-        await lavalinkManager.init(client.user);
-        // Don't set lavalinkAvailable = true here, wait for nodeConnect event
-        console.log('🔗 Lavalink Manager initialized successfully!');
-        
-        // Setup Lavalink events
-        setupLavalinkEvents();
-        
-    } catch (error) {
-        console.error('⚠️ Lavalink initialization failed:', error.message);
-        console.log('🎵 Bot will use fallback streaming methods...');
-        lavalinkAvailable = false;
-    }
+    // Lavalink disabled - using fallback streaming methods for better reliability
+    console.log('🎵 Using direct streaming methods (YouTube, Spotify, SoundCloud)...');
+    lavalinkAvailable = false;
 
     // Register slash commands
     try {
@@ -781,8 +718,12 @@ async function handleCommand(command, message, args, guildSettings) {
             break;
         
         case 'stop':
-        case 'st':
             await handleStopCommand(message, guildSettings);
+            break;
+        
+        case 'status':
+        case 'st':
+            await handleStatusCommand(message, guildSettings);
             break;
         
         case 'pause':
@@ -825,6 +766,20 @@ async function handleCommand(command, message, args, guildSettings) {
         case 'nowplaying':
         case 'np':
             await handleNowPlayingCommand(message, guildSettings);
+            break;
+        
+        case 'lyrics':
+        case 'ly':
+            await handleLyricsCommand(message, guildSettings);
+            break;
+        
+        case 'bass':
+            await handleBassCommand(message, args, guildSettings);
+            break;
+        
+        case 'equalizer':
+        case 'eq':
+            await handleEqualizerCommand(message, args, guildSettings);
             break;
         
         case 'setprefix':
@@ -1128,6 +1083,55 @@ async function handleStopCommand(message, guildSettings) {
         .setTitle(`${config.EMOJIS.STOP} ${messages.MUSIC_STOPPED}`)
         .setColor(config.COLORS.SUCCESS);
     await message.reply({ embeds: [embed] });
+}
+
+async function handleStatusCommand(message, guildSettings) {
+    const client = message.client;
+    const uptime = process.uptime();
+    const memoryUsage = process.memoryUsage();
+    
+    // Format uptime
+    const days = Math.floor(uptime / 86400);
+    const hours = Math.floor((uptime % 86400) / 3600);
+    const minutes = Math.floor((uptime % 3600) / 60);
+    const seconds = Math.floor(uptime % 60);
+    
+    const uptimeString = `${days}d ${hours}h ${minutes}m ${seconds}s`;
+    
+    // Calculate ping
+    const ping = Date.now() - message.createdTimestamp;
+    const wsPing = client.ws.ping;
+    
+    // Format memory usage
+    const formatBytes = (bytes) => {
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        if (bytes === 0) return '0 Bytes';
+        const i = parseInt(Math.floor(Math.log(bytes) / Math.log(1024)));
+        return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+    };
+    
+    // Get active queues count
+    const activeQueues = global.queues ? global.queues.size : 0;
+    const activePlayers = global.audioPlayers ? global.audioPlayers.size : 0;
+    
+    const statusEmbed = new EmbedBuilder()
+        .setTitle('🤖 Bot Status')
+        .setColor('#00ff00')
+        .addFields(
+            { name: '🏓 Ping', value: `${ping}ms`, inline: true },
+            { name: '📡 WebSocket', value: `${wsPing}ms`, inline: true },
+            { name: '⏱️ Uptime', value: uptimeString, inline: true },
+            { name: '🖥️ Servers', value: `${client.guilds.cache.size}`, inline: true },
+            { name: '👥 Users', value: `${client.users.cache.size}`, inline: true },
+            { name: '🎵 Active Queues', value: `${activeQueues}`, inline: true },
+            { name: '🎶 Active Players', value: `${activePlayers}`, inline: true },
+            { name: '📊 Memory Usage', value: formatBytes(memoryUsage.heapUsed), inline: true },
+            { name: '🚀 Node.js', value: process.version, inline: true }
+        )
+        .setFooter({ text: `EchoTune Music Bot • ${new Date().toLocaleString()}` })
+        .setTimestamp();
+
+    await message.reply({ embeds: [statusEmbed] });
 }
 
 async function handlePauseCommand(message, guildSettings) {
@@ -1925,7 +1929,7 @@ async function handleHelpCommand(message, guildSettings) {
                 name: '🎵 Music Commands',
                 value: `\`${prefix}play\` \`${prefix}p\` - Play a song\n` +
                       `\`${prefix}skip\` \`${prefix}s\` - Skip current song\n` +
-                      `\`${prefix}stop\` \`${prefix}st\` - Stop music\n` +
+                      `\`${prefix}stop\` \`${prefix}stp\` - Stop music\n` +
                       `\`${prefix}pause\` - Pause music\n` +
                       `\`${prefix}resume\` - Resume music\n` +
                       `\`${prefix}volume\` \`${prefix}v\` - Set volume (0-100)`,
@@ -1945,6 +1949,14 @@ async function handleHelpCommand(message, guildSettings) {
                       `\`${prefix}autoplay\` - Toggle autoplay\n` +
                       `\`${prefix}setprefix\` - Change prefix\n` +
                       `\`${prefix}help\` \`${prefix}h\` - Show this help`,
+                inline: true
+            },
+            {
+                name: '🎧 Audio & Info Commands',
+                value: `\`${prefix}status\` \`${prefix}st\` - Bot status & ping\n` +
+                      `\`${prefix}lyrics\` \`${prefix}ly\` - Get song lyrics\n` +
+                      `\`${prefix}bass\` - Bass boost (0-100)\n` +
+                      `\`${prefix}equalizer\` \`${prefix}eq\` - Audio presets`,
                 inline: true
             }
         )
@@ -1981,6 +1993,150 @@ async function handleSetPrefixCommand(message, args, guildSettings) {
         .setDescription(`\`${newPrefix}\``)
         .setColor(config.COLORS.SUCCESS);
     await message.reply({ embeds: [embed] });
+}
+
+// Lyrics Command
+async function handleLyricsCommand(message, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    
+    try {
+        const queue = getQueue(message.guild.id);
+        
+        if (!queue || !queue.nowPlaying) {
+            const embed = new EmbedBuilder()
+                .setDescription(lang === 'hi' 
+                    ? '❌ कोई गाना नहीं चल रहा है!'
+                    : '❌ No song is currently playing!')
+                .setColor(config.COLORS.ERROR);
+            return await message.reply({ embeds: [embed] });
+        }
+
+        const track = queue.nowPlaying;
+        const songName = track.info?.title || track.title;
+        const artist = track.info?.author || track.artist || '';
+
+        // Create a simple lyrics not found embed (lyrics API would be needed for real implementation)
+        const embed = new EmbedBuilder()
+            .setTitle('🎵 Lyrics')
+            .setDescription(lang === 'hi' 
+                ? `**गाना:** ${songName}\n**कलाकार:** ${artist}\n\n❗ Lyrics feature आने वाले update में available होगा!\nअभी तक manual search करें: [Google](https://www.google.com/search?q=${encodeURIComponent(songName + ' ' + artist + ' lyrics')})`
+                : `**Song:** ${songName}\n**Artist:** ${artist}\n\n❗ Lyrics feature coming in next update!\nFor now, search manually: [Google](https://www.google.com/search?q=${encodeURIComponent(songName + ' ' + artist + ' lyrics')})`)
+            .setColor(config.COLORS.MUSIC)
+            .setFooter({ text: 'Lyrics feature coming soon!' });
+
+        await message.reply({ embeds: [embed] });
+
+    } catch (error) {
+        console.error('Lyrics command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? '⚠️ Lyrics fetch करने में problem हुई!'
+                : '⚠️ Failed to fetch lyrics!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Bass Boost Command
+async function handleBassCommand(message, args, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    
+    try {
+        const queue = getQueue(message.guild.id);
+        
+        if (!queue || !queue.nowPlaying) {
+            const embed = new EmbedBuilder()
+                .setDescription(lang === 'hi' 
+                    ? '❌ कोई गाना नहीं चल रहा है!'
+                    : '❌ No song is currently playing!')
+                .setColor(config.COLORS.ERROR);
+            return await message.reply({ embeds: [embed] });
+        }
+
+        const level = args[0] ? parseInt(args[0]) : 0;
+        
+        if (isNaN(level) || level < 0 || level > 100) {
+            const embed = new EmbedBuilder()
+                .setDescription(lang === 'hi' 
+                    ? '❌ Bass level 0-100 के बीच होना चाहिए!\nExample: `!bass 50`'
+                    : '❌ Bass level must be between 0-100!\nExample: `!bass 50`')
+                .setColor(config.COLORS.ERROR);
+            return await message.reply({ embeds: [embed] });
+        }
+
+        // Store bass setting in queue (future implementation would apply actual audio filter)
+        queue.bassLevel = level;
+
+        const embed = new EmbedBuilder()
+            .setTitle('🎵 Bass Boost')
+            .setDescription(lang === 'hi' 
+                ? `✅ Bass level ${level}% पर set हो गया!\n\n❗ Audio filters आने वाले update में fully implement होंगे।`
+                : `✅ Bass level set to ${level}%!\n\n❗ Audio filters will be fully implemented in next update.`)
+            .setColor(config.COLORS.SUCCESS);
+
+        await message.reply({ embeds: [embed] });
+
+    } catch (error) {
+        console.error('Bass command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? '⚠️ Bass settings में problem हुई!'
+                : '⚠️ Failed to set bass!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Equalizer Command
+async function handleEqualizerCommand(message, args, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    
+    try {
+        const queue = getQueue(message.guild.id);
+        
+        if (!queue || !queue.nowPlaying) {
+            const embed = new EmbedBuilder()
+                .setDescription(lang === 'hi' 
+                    ? '❌ कोई गाना नहीं चल रहा है!'
+                    : '❌ No song is currently playing!')
+                .setColor(config.COLORS.ERROR);
+            return await message.reply({ embeds: [embed] });
+        }
+
+        const preset = args[0]?.toLowerCase();
+        const validPresets = ['pop', 'rock', 'jazz', 'classical', 'electronic', 'reset'];
+        
+        if (!preset || !validPresets.includes(preset)) {
+            const embed = new EmbedBuilder()
+                .setTitle('🎛️ Equalizer Presets')
+                .setDescription(lang === 'hi' 
+                    ? `**Available presets:**\n• \`pop\` - Pop music के लिए\n• \`rock\` - Rock music के लिए\n• \`jazz\` - Jazz music के लिए\n• \`classical\` - Classical music के लिए\n• \`electronic\` - Electronic music के लिए\n• \`reset\` - Default settings\n\nExample: \`!eq pop\``
+                    : `**Available presets:**\n• \`pop\` - For pop music\n• \`rock\` - For rock music\n• \`jazz\` - For jazz music\n• \`classical\` - For classical music\n• \`electronic\` - For electronic music\n• \`reset\` - Default settings\n\nExample: \`!eq pop\``)
+                .setColor(config.COLORS.INFO);
+            return await message.reply({ embeds: [embed] });
+        }
+
+        // Store EQ setting in queue (future implementation would apply actual audio filter)
+        queue.eqPreset = preset;
+
+        const embed = new EmbedBuilder()
+            .setTitle('🎛️ Equalizer')
+            .setDescription(lang === 'hi' 
+                ? `✅ Equalizer को \`${preset}\` preset पर set कर दिया!\n\n❗ Audio equalizer आने वाले update में fully implement होगा।`
+                : `✅ Equalizer set to \`${preset}\` preset!\n\n❗ Audio equalizer will be fully implemented in next update.`)
+            .setColor(config.COLORS.SUCCESS);
+
+        await message.reply({ embeds: [embed] });
+
+    } catch (error) {
+        console.error('Equalizer command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription(lang === 'hi' 
+                ? '⚠️ Equalizer settings में problem हुई!'
+                : '⚠️ Failed to set equalizer!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
 }
 
 // Register slash commands

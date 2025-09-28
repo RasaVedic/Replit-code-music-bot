@@ -2,7 +2,7 @@ const { Client, Collection, GatewayIntentBits, EmbedBuilder, REST, Routes } = re
 const { initDatabase, getGuildSettings, logCommand } = require('./src/database');
 const { getQueue } = require('./utils/QueueManager');
 const { getCachedGuildSettings, setupCacheCleanup } = require('./utils/CacheManager');
-const { initializeLavalink } = require('./src/MusicPlayer');
+// Removed Lavalink dependency for better reliability
 const { handlePlayCommand, handleSkipCommand, handleStopCommand, handleQueueCommand, handleStatusCommand, handleHelpCommand, handlePauseCommand, handleResumeCommand, handleVolumeCommand, handleJoinCommand, handleLeaveCommand, handleLoopCommand, handleShuffleCommand, handleClearCommand, handleRemoveCommand, handleMoveCommand } = require('./src/CommandHandlers');
 const { handleButtonInteraction } = require('./src/ButtonHandlers');
 const config = require('./config/botConfig');
@@ -98,11 +98,8 @@ client.on('ready', async () => {
     console.log(`🎵 ${client.user.username} music bot is online!`);
     console.log(`📊 Serving ${client.guilds.cache.size} servers`);
 
-    // Try to initialize Lavalink
-    const lavalinkSuccess = initializeLavalink(client);
-    if (!lavalinkSuccess) {
-        console.log('🎵 Using enhanced streaming methods with anti-detection...');
-    }
+    // Using enhanced streaming methods with anti-detection for maximum reliability
+    console.log('🎵 Using enhanced streaming methods with anti-detection...');
 
     // Register slash commands
     try {

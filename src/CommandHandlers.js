@@ -15,19 +15,11 @@ function checkSameVoiceChannel(message) {
         return { valid: false, error: '❌ आपको voice channel में होना चाहिए!' };
     }
 
-    // Check Lavalink mode first
-    if (lavalinkAvailable && lavalinkManager) {
-        const player = lavalinkManager.getPlayer(message.guild.id);
-        if (player && player.voiceChannelId && userChannel.id !== player.voiceChannelId) {
-            return { valid: false, error: '❌ आपको bot के साथ same voice channel में होना चाहिए!' };
-        }
-    } else {
-        // Check fallback mode
-        const { getVoiceConnection } = require('@discordjs/voice');
-        const connection = getVoiceConnection(message.guild.id);
-        if (connection && connection.joinConfig && userChannel.id !== connection.joinConfig.channelId) {
-            return { valid: false, error: '❌ आपको bot के साथ same voice channel में होना चाहिए!' };
-        }
+    // Check voice connection
+    const { getVoiceConnection } = require('@discordjs/voice');
+    const connection = getVoiceConnection(message.guild.id);
+    if (connection && connection.joinConfig && userChannel.id !== connection.joinConfig.channelId) {
+        return { valid: false, error: '❌ आपको bot के साथ same voice channel में होना चाहिए!' };
     }
 
     return { valid: true };
@@ -67,58 +59,15 @@ async function handlePlayCommand(message, args, guildSettings) {
     const loadingMsg = await message.reply({ embeds: [loadingEmbed] });
 
     try {
-        if (lavalinkAvailable && lavalinkManager) {
-            const result = await lavalinkManager.search({
-                query,
-                source: config.SOURCES.DEFAULT
-            }, message.author);
-
-            if (!result.tracks.length) {
-                return await handleFallbackSearch(message, query, loadingMsg, guildSettings, messages);
-            }
-
-            let player = lavalinkManager.getPlayer(message.guild.id);
-            if (!player) {
-                player = lavalinkManager.createPlayer({
-                    guildId: message.guild.id,
-                    voiceChannelId: message.member.voice.channel.id,
-                    textChannelId: message.channel.id,
-                    selfDeaf: true,
-                    volume: guildSettings.volume || 50
-                });
-                await player.connect();
-            }
-
-            const track = result.tracks[0];
-            track.requester = message.author;
-
-            if (player.queue.current) {
-                queue.add(track);
-                player.queue.add(track);
-
-                const embed = new EmbedBuilder()
-                    .setTitle(`${config.EMOJIS.SUCCESS} ${messages.SONG_ADDED}`)
-                    .setDescription(`**${track.info.title}**\nby ${track.info.author}`)
-                    .addFields(
-                        { name: '⏱️ Duration', value: formatDuration(track.info.length), inline: true },
-                        { name: '📍 Position', value: `${queue.size()}`, inline: true }
-                    )
-                    .setThumbnail(track.info.artworkUrl || track.info.thumbnail)
-                    .setColor(config.COLORS.SUCCESS);
-
-                await loadingMsg.edit({ embeds: [embed] });
-            } else {
-                queue.nowPlaying = track;
-                await player.play({ track: track.encoded });
-                await loadingMsg.delete().catch(() => {});
-            }
-        } else {
-            await handleFallbackSearch(message, query, loadingMsg, guildSettings, messages);
-        }
-
+        // Use enhanced streaming system for reliable playback
+        await handleFallbackSearch(message, query, loadingMsg, guildSettings, messages);
     } catch (error) {
         console.error('Play command error:', error);
-        await handleFallbackSearch(message, query, loadingMsg, guildSettings, messages);
+        const embed = new EmbedBuilder()
+            .setTitle(`${config.EMOJIS.ERROR} Error`)
+            .setDescription(messages.ERROR_OCCURRED)
+            .setColor(config.COLORS.ERROR);
+        await loadingMsg.edit({ embeds: [embed] });
     }
 }
 
@@ -247,16 +196,10 @@ async function handleSkipCommand(message, guildSettings) {
 
     const currentTrack = queue.nowPlaying;
     
-    if (lavalinkAvailable && lavalinkManager) {
-        const player = lavalinkManager.getPlayer(message.guild.id);
-        if (player) {
-            await player.skip();
-        }
-    } else {
-        const player = global.audioPlayers.get(message.guild.id);
-        if (player) {
-            player.stop();
-        }
+    // Use enhanced streaming system
+    const player = global.audioPlayers.get(message.guild.id);
+    if (player) {
+        player.stop();
     }
 
     const embed = new EmbedBuilder()
@@ -279,14 +222,8 @@ async function handleStopCommand(message, guildSettings) {
         return await message.reply({ embeds: [embed] });
     }
 
-    if (lavalinkAvailable && lavalinkManager) {
-        const player = lavalinkManager.getPlayer(message.guild.id);
-        if (player) {
-            await player.destroy();
-        }
-    } else {
-        cleanupFallbackPlayer(message.guild.id);
-    }
+    // Use enhanced streaming system
+    cleanupFallbackPlayer(message.guild.id);
 
     queue.clear();
     global.queues.delete(message.guild.id);
@@ -347,7 +284,7 @@ async function handleStatusCommand(message, guildSettings) {
             { name: '🖥️ Memory', value: `${Math.round(memoryUsage.used / 1024 / 1024)}MB`, inline: true },
             { name: '🎵 Active Players', value: `${activePlayers}`, inline: true },
             { name: '📋 Active Queues', value: `${activeQueues}`, inline: true },
-            { name: '🔧 Mode', value: lavalinkAvailable ? 'Lavalink' : 'Enhanced Fallback', inline: true }
+            { name: '🔧 Mode', value: 'Enhanced Streaming', inline: true }
         )
         .setTimestamp();
 
@@ -435,26 +372,7 @@ async function handlePauseCommand(message, guildSettings) {
     }
 
     try {
-        // Try Lavalink first
-        if (lavalinkAvailable && lavalinkManager) {
-            const player = lavalinkManager.getPlayer(message.guild.id);
-            if (player) {
-                if (player.paused) {
-                    const embed = new EmbedBuilder()
-                        .setDescription('❌ Music पहले से pause है!')
-                        .setColor(config.COLORS.WARNING);
-                    return await message.reply({ embeds: [embed] });
-                }
-                await player.pause(true);
-                const embed = new EmbedBuilder()
-                    .setTitle(`${config.EMOJIS.PAUSE} Music Paused`)
-                    .setDescription('⏸️ Music को pause कर दिया!')
-                    .setColor(config.COLORS.SUCCESS);
-                return await message.reply({ embeds: [embed] });
-            }
-        }
-
-        // Fallback to @discordjs/voice
+        // Use enhanced streaming system
         const player = global.audioPlayers.get(message.guild.id);
         if (!player) {
             const embed = new EmbedBuilder()
@@ -507,26 +425,7 @@ async function handleResumeCommand(message, guildSettings) {
     }
 
     try {
-        // Try Lavalink first
-        if (lavalinkAvailable && lavalinkManager) {
-            const player = lavalinkManager.getPlayer(message.guild.id);
-            if (player) {
-                if (!player.paused) {
-                    const embed = new EmbedBuilder()
-                        .setDescription('❌ Music pause में नहीं है!')
-                        .setColor(config.COLORS.WARNING);
-                    return await message.reply({ embeds: [embed] });
-                }
-                await player.pause(false);
-                const embed = new EmbedBuilder()
-                    .setTitle(`${config.EMOJIS.PLAY} Music Resumed`)
-                    .setDescription('▶️ Music को resume कर दिया!')
-                    .setColor(config.COLORS.SUCCESS);
-                return await message.reply({ embeds: [embed] });
-            }
-        }
-
-        // Fallback to @discordjs/voice
+        // Use enhanced streaming system
         const player = global.audioPlayers.get(message.guild.id);
         if (!player) {
             const embed = new EmbedBuilder()

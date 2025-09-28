@@ -193,8 +193,20 @@ async function handleFallbackTrackEnd(guildId) {
             queue.add(suggestion);
             const nextSong = queue.next();
             if (nextSong) {
-                queue.nowPlaying = nextSong;
+                const unifiedTrack = toUnifiedTrack(nextSong, 'fallback');
+                queue.nowPlaying = unifiedTrack;
                 await playFallbackTrack(guildId, nextSong);
+                
+                // Send now playing message for autoplay
+                if (queue.textChannel) {
+                    try {
+                        const guildSettings = getGuildSettings(guildId);
+                        const nowPlayingMessage = createNowPlayingEmbed(unifiedTrack, queue, guildSettings);
+                        await queue.textChannel.send(nowPlayingMessage);
+                    } catch (error) {
+                        console.log('Could not send autoplay now playing message:', error.message);
+                    }
+                }
             }
         } else {
             queue.clear();
@@ -300,7 +312,5 @@ module.exports = {
     playFallbackTrack,
     handleFallbackTrackEnd,
     cleanupFallbackPlayer,
-    getAutoPlaySuggestion,
-    get lavalinkManager() { return lavalinkManager; },
-    get lavalinkAvailable() { return lavalinkAvailable; }
+    getAutoPlaySuggestion
 };

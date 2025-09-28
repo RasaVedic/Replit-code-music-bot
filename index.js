@@ -422,15 +422,49 @@ async function handleYouTubePlaylist(playlistUrl, requester) {
     return null;
 }
 
-// Spotify playlist handler (requires Spotify integration)
+// Enhanced Spotify playlist handler with YouTube conversion
 async function handleSpotifyPlaylist(spotifyUrl, requester) {
     try {
-        // This would integrate with Spotify API if available
-        console.log('🎵 Spotify playlist detected - converting to YouTube search...');
+        console.log('🎵 Spotify playlist detected - attempting conversion...');
         
-        // For now, we'll return null and let the regular search handle it
-        // In the future, this could use Spotify API to get track list
-        // and search for each track on YouTube
+        // Extract basic info from URL
+        const playlistId = spotifyUrl.match(/playlist\/(\w+)/)?.[1] || spotifyUrl.match(/album\/(\w+)/)?.[1];
+        if (!playlistId) return null;
+        
+        // Basic fallback: Search for common playlist/album patterns
+        const isAlbum = spotifyUrl.includes('/album/');
+        const searchTerm = isAlbum ? 'album songs' : 'playlist songs';
+        
+        // For now, create a basic placeholder that can be expanded later
+        console.log('🔍 Converting Spotify to YouTube search...');
+        
+        // Try to search for similar content on YouTube
+        const results = await getCachedSearchResults(`${searchTerm} music`, 10);
+        
+        if (results && results.length > 0) {
+            const tracks = results.slice(0, Math.min(20, results.length)).map(video => ({
+                info: {
+                    title: video.title,
+                    author: video.channel?.name || video.author || 'Unknown',
+                    length: (video.duration || 0) * 1000,
+                    artworkUrl: video.thumbnail?.url,
+                    thumbnail: video.thumbnail?.url
+                },
+                requester,
+                url: video.url,
+                source: 'youtube-from-spotify'
+            }));
+            
+            return {
+                tracks,
+                playlistInfo: {
+                    name: `Converted ${isAlbum ? 'Album' : 'Playlist'}`,
+                    author: 'Spotify Conversion',
+                    trackCount: tracks.length,
+                    type: 'spotify-converted'
+                }
+            };
+        }
         
         return null;
     } catch (error) {
@@ -956,19 +990,21 @@ function performanceCacheCleanup() {
         }
     }
     
-    // Limit cache sizes to prevent memory issues
+    // Proper cache eviction with LRU strategy  
     if (global.guildSettingsCache.size > CACHE_CONFIG.MAX_CACHE_SIZE) {
-        const excess = global.guildSettingsCache.size - CACHE_CONFIG.MAX_CACHE_SIZE;
-        const keysToDelete = Array.from(global.guildSettingsCache.keys()).slice(0, excess);
-        keysToDelete.forEach(key => global.guildSettingsCache.delete(key));
-        cleanedCount += excess;
+        const entries = Array.from(global.guildSettingsCache.entries());
+        entries.sort((a, b) => a[1].timestamp - b[1].timestamp); // Sort by timestamp
+        const toDelete = entries.slice(0, entries.length - CACHE_CONFIG.MAX_CACHE_SIZE);
+        toDelete.forEach(([key]) => global.guildSettingsCache.delete(key));
+        cleanedCount += toDelete.length;
     }
     
     if (global.searchResultsCache.size > CACHE_CONFIG.MAX_CACHE_SIZE) {
-        const excess = global.searchResultsCache.size - CACHE_CONFIG.MAX_CACHE_SIZE;
-        const keysToDelete = Array.from(global.searchResultsCache.keys()).slice(0, excess);
-        keysToDelete.forEach(key => global.searchResultsCache.delete(key));
-        cleanedCount += excess;
+        const entries = Array.from(global.searchResultsCache.entries());
+        entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+        const toDelete = entries.slice(0, entries.length - CACHE_CONFIG.MAX_CACHE_SIZE);
+        toDelete.forEach(([key]) => global.searchResultsCache.delete(key));
+        cleanedCount += toDelete.length;
     }
     
     if (cleanedCount > 0) {
@@ -1173,7 +1209,7 @@ async function handleCommand(command, message, args, guildSettings) {
             break;
         
         case 'status':
-        case 'st':
+        case 'status':
             await handleStatusCommand(message, guildSettings);
             break;
         

@@ -288,6 +288,14 @@ async function createFallbackPlayer(guildId, voiceChannel, textChannel) {
 
         player.on('error', (error) => {
             console.error(`Fallback player error: ${error.message}`);
+            
+            // Notify user about streaming errors
+            if (error.message.includes('403') || error.message.includes('Status code: 403')) {
+                notifyStreamingError(guildId, 'youtube_blocked');
+            } else {
+                notifyStreamingError(guildId, 'general_error');
+            }
+            
             handleFallbackTrackEnd(guildId);
         });
 
@@ -311,7 +319,7 @@ async function playFallbackTrack(guildId, track) {
                 stream = await play.stream(track.url);
                 console.log(`[${guildId}] Playing with play-dl: ${track.title}`);
             } catch (error) {
-                console.log(`[${guildId}] play-dl failed, trying ytdl-core...`);
+                console.log(`[${guildId}] play-dl failed (${error.message}), trying ytdl-core...`);
             }
         }
 
@@ -332,11 +340,21 @@ async function playFallbackTrack(guildId, track) {
                 console.log(`[${guildId}] Playing with ytdl-core: ${track.title}`);
             } catch (error) {
                 console.log(`[${guildId}] ytdl-core failed: ${error.message}`);
+                
+                // Notify user about YouTube streaming failure
+                if (error.message.includes('403') || error.message.includes('Status code: 403')) {
+                    notifyStreamingError(guildId, 'youtube_blocked');
+                } else {
+                    notifyStreamingError(guildId, 'streaming_failed');
+                }
                 return false;
             }
         }
 
-        if (!stream) return false;
+        if (!stream) {
+            notifyStreamingError(guildId, 'no_stream');
+            return false;
+        }
 
         const audioStream = stream.stream || stream;
         const resource = createAudioResource(audioStream, {
@@ -355,6 +373,65 @@ async function playFallbackTrack(guildId, track) {
     } catch (error) {
         console.error(`Failed to play fallback track: ${error.message}`);
         return false;
+    }
+}
+
+// Notify users about streaming errors
+async function notifyStreamingError(guildId, errorType) {
+    try {
+        const queue = getQueue(guildId);
+        const guild = client.guilds.cache.get(guildId);
+        if (!guild || !queue.textChannel) return;
+
+        let message = '';
+        let color = config.COLORS.ERROR;
+        
+        switch (errorType) {
+            case 'youtube_blocked':
+                message = '🚫 **YouTube Streaming Issue Detected!**\n\n' +
+                         '❌ YouTube has temporarily blocked video access (Error 403)\n' +
+                         '💡 **What you can try:**\n' +
+                         '• Search by song name instead of using URLs\n' +
+                         '• Try a different song\n' +
+                         '• Use Spotify links (if available)\n' +
+                         '• YouTube often fixes this automatically, try again in a few minutes\n\n' +
+                         '🔄 The bot will automatically try the next song in queue...';
+                break;
+            case 'streaming_failed':
+                message = '⚠️ **Streaming Failed**\n\n' +
+                         '❌ Unable to stream this video\n' +
+                         '💡 **Try:**\n' +
+                         '• Different search terms\n' +
+                         '• Another song\n' +
+                         '• Check if the video is available in your region\n\n' +
+                         '⏭️ Skipping to next song...';
+                break;
+            case 'no_stream':
+                message = '🔗 **No Stream Available**\n\n' +
+                         '❌ Could not get audio stream from any source\n' +
+                         '💡 **Suggestions:**\n' +
+                         '• Try searching instead of using direct links\n' +
+                         '• Use different keywords\n' +
+                         '• Check if the video exists and is public\n\n' +
+                         '⏭️ Moving to next track...';
+                break;
+            case 'general_error':
+                message = '⚠️ **Playback Error**\n\n' +
+                         '❌ Audio playback encountered an issue\n' +
+                         '🔄 Attempting to continue with next song...';
+                break;
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle('🎵 Streaming Notice')
+            .setDescription(message)
+            .setColor(color)
+            .setTimestamp()
+            .setFooter({ text: 'These issues are usually temporary and resolve automatically' });
+
+        await queue.textChannel.send({ embeds: [embed] });
+    } catch (error) {
+        console.error('Failed to send streaming error notification:', error);
     }
 }
 

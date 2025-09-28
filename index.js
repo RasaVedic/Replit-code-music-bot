@@ -35,6 +35,45 @@ global.lastCacheClean = Date.now();
 // Make getQueue globally available
 global.getQueue = getQueue;
 
+// Add missing global functions referenced by command files
+global.createGuildAudioPlayer = function(guildId) {
+    let player = global.audioPlayers.get(guildId);
+    if (!player) {
+        const { createAudioPlayer } = require('@discordjs/voice');
+        player = createAudioPlayer();
+        global.audioPlayers.set(guildId, player);
+        
+        // Set up player event handlers
+        const { AudioPlayerStatus } = require('@discordjs/voice');
+        player.on(AudioPlayerStatus.Idle, () => {
+            const { handleFallbackTrackEnd } = require('./src/MusicPlayer');
+            handleFallbackTrackEnd(guildId);
+        });
+        
+        player.on('error', (error) => {
+            console.error(`Audio player error in guild ${guildId}:`, error);
+        });
+    }
+    return player;
+};
+
+global.playNext = async function(guildId) {
+    const queue = global.getQueue(guildId);
+    const nextTrack = queue.next();
+    
+    if (nextTrack) {
+        const { playFallbackTrack } = require('./src/MusicPlayer');
+        const { toUnifiedTrack } = require('./utils/TrackHelpers');
+        
+        const unifiedTrack = toUnifiedTrack(nextTrack, 'fallback');
+        queue.nowPlaying = unifiedTrack;
+        
+        const success = await playFallbackTrack(guildId, nextTrack);
+        return success;
+    }
+    return false;
+};
+
 // Perform startup cleanup
 performStartupCleanup();
 

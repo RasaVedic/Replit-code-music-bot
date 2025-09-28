@@ -1,4 +1,4 @@
-modules = ["nodejs-20", "python-3.11"]
+modules = ["nodejs-20", "python-3.11", "java-graalvm22.3"]
 [agent]
 expertMode = true
 integrations = ["spotify:1.0.0"]
@@ -31,5 +31,13 @@ args = "node index.js"
 outputType = "console"
 
 [[ports]]
+localPort = 3000
+externalPort = 3000
+
+[[ports]]
+localPort = 8008
+externalPort = 8008
+
+[[ports]]
 localPort = 8080
-externalPort = 80
+externalPort = 8080

@@ -34,6 +34,23 @@ try {
 let lavalinkManager = null;
 let lavalinkAvailable = false;
 
+// Lavalink configuration
+const lavalinkConfig = {
+    nodes: [
+        {
+            authorization: "youshallnotpass",
+            host: "localhost",
+            port: 8080,
+            id: "main_node"
+        }
+    ],
+    sendToShard: (guildId, payload) => client.guilds.cache.get(guildId)?.shard?.send(payload),
+    client: {
+        id: process.env.CLIENT_ID || client.user?.id,
+        username: "EchoTune"
+    }
+};
+
 // Global queue management
 global.queues = new Map();
 global.players = new Map();
@@ -619,8 +636,8 @@ client.on('ready', async () => {
     console.log(`🎵 ${client.user.username} music bot is online!`);
     console.log(`📊 Serving ${client.guilds.cache.size} servers`);
 
-    // Lavalink disabled - using fallback streaming methods for better reliability
-    console.log('🎵 Using direct streaming methods (YouTube, Spotify, SoundCloud)...');
+    // Lavalink disabled for now - using enhanced fallback streaming
+    console.log('🎵 Using enhanced streaming methods with anti-detection...');
     lavalinkAvailable = false;
 
     // Register slash commands

@@ -1,13 +1,18 @@
-const { Client, Collection, GatewayIntentBits, REST, Routes, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
+const { Client, Collection, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, REST, Routes } = require('discord.js');
+const { LavalinkManager } = require('lavalink-client');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, VoiceConnectionStatus } = require('@discordjs/voice');
 const ytdl = require('@distube/ytdl-core');
 const YouTube = require('youtube-sr').default;
 const play = require('play-dl');
-const scdl = require('soundcloud-downloader').default;
-const { getYouTubeUrlFromSpotify, searchSpotifyPlaylist } = require('./spotify.js');
+const { initDatabase, getGuildSettings, updateGuildPrefix, logCommand } = require('./database');
+const config = require('./config/botConfig');
 const fs = require('fs');
 const path = require('path');
 
+// Start health check server for deployment
+require('./health');
+
+// Initialize bot client
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -17,14 +22,23 @@ const client = new Client({
     ],
 });
 
-// Bot configuration
-const PREFIX = '!';
-const MAX_QUEUE_SIZE = 100;
-const DEFAULT_VOLUME = 0.5;
+// Initialize database with error handling
+try {
+    initDatabase();
+} catch (error) {
+    console.error('❌ Database initialization failed:', error.message);
+    console.log('🔄 Bot will continue without database features...');
+}
 
-// Music queue system
-const musicQueues = new Map();
-const audioPlayers = new Map();
+// Lavalink Manager - will be initialized after bot is ready
+let lavalinkManager = null;
+let lavalinkAvailable = false;
+
+// Global queue management
+global.queues = new Map();
+global.players = new Map();
+global.audioPlayers = new Map();
+global.connections = new Map();
 
 // Load commands
 client.commands = new Collection();
@@ -32,33 +46,27 @@ const commandsPath = path.join(__dirname, 'commands');
 
 // Create commands directory if it doesn't exist
 if (!fs.existsSync(commandsPath)) {
-    fs.mkdirSync(commandsPath);
+    fs.mkdirSync(commandsPath, { recursive: true });
 }
 
-// Load command files
-const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
-for (const file of commandFiles) {
-    const filePath = path.join(commandsPath, file);
-    const command = require(filePath);
-    client.commands.set(command.data.name, command);
-}
-
-// Music utility functions
-class MusicQueue {
+// Enhanced Music Queue Class
+class EnhancedMusicQueue {
     constructor(guildId) {
         this.guildId = guildId;
         this.songs = [];
         this.nowPlaying = null;
-        this.volume = DEFAULT_VOLUME;
+        this.volume = 50;
         this.loop = false;
         this.autoplay = false;
-        this.shuffled = false;
         this.history = [];
+        this.textChannel = null;
+        this.voiceChannel = null;
+        this.player = null;
     }
 
     add(song) {
-        if (this.songs.length >= MAX_QUEUE_SIZE) {
-            throw new Error(`Queue is full! Maximum ${MAX_QUEUE_SIZE} songs allowed.`);
+        if (this.songs.length >= config.BOT.MAX_QUEUE_SIZE) {
+            throw new Error(`Queue is full! Maximum ${config.BOT.MAX_QUEUE_SIZE} songs allowed.`);
         }
         this.songs.push(song);
     }
@@ -68,9 +76,9 @@ class MusicQueue {
             return this.nowPlaying;
         }
         if (this.nowPlaying) {
-            this.history.push(this.nowPlaying);
-            if (this.history.length > 10) {
-                this.history.shift();
+            this.history.unshift(this.nowPlaying);
+            if (this.history.length > 20) {
+                this.history.pop();
             }
         }
         return this.songs.shift();
@@ -78,12 +86,16 @@ class MusicQueue {
 
     previous() {
         if (this.history.length > 0) {
-            if (this.nowPlaying) {
-                this.songs.unshift(this.nowPlaying);
-            }
-            return this.history.pop();
+            const prev = this.history.shift();
+            this.songs.unshift(this.nowPlaying);
+            return prev;
         }
         return null;
+    }
+
+    clear() {
+        this.songs = [];
+        this.nowPlaying = null;
     }
 
     shuffle() {
@@ -91,844 +103,1232 @@ class MusicQueue {
             const j = Math.floor(Math.random() * (i + 1));
             [this.songs[i], this.songs[j]] = [this.songs[j], this.songs[i]];
         }
-        this.shuffled = true;
-    }
-
-    clear() {
-        this.songs = [];
-        this.nowPlaying = null;
-        this.history = [];
     }
 
     isEmpty() {
         return this.songs.length === 0;
     }
 
-    getPosition(song) {
-        return this.songs.findIndex(s => s.url === song.url) + 1;
+    size() {
+        return this.songs.length;
     }
 }
 
+// Get or create queue
 function getQueue(guildId) {
-    if (!musicQueues.has(guildId)) {
-        musicQueues.set(guildId, new MusicQueue(guildId));
+    if (!global.queues.has(guildId)) {
+        global.queues.set(guildId, new EnhancedMusicQueue(guildId));
     }
-    return musicQueues.get(guildId);
+    return global.queues.get(guildId);
 }
 
-// Helper functions for different music sources
-async function getTrackFromUrl(url, requestedBy) {
-    try {
-        // Detect source type
-        if (url.includes('spotify.com')) {
-            return await getSpotifyTrack(url, requestedBy);
-        } else if (url.includes('soundcloud.com')) {
-            return await getSoundCloudTrack(url, requestedBy);
-        } else if (url.includes('youtube.com') || url.includes('youtu.be')) {
-            return await getYouTubeTrack(url, requestedBy);
-        } else {
-            throw new Error('Unsupported URL format');
-        }
-    } catch (error) {
-        console.error('Error getting track from URL:', error);
-        throw error;
-    }
-}
-
-async function getSpotifyTrack(spotifyUrl, requestedBy) {
-    try {
-        const spotifyInfo = await getYouTubeUrlFromSpotify(spotifyUrl);
-        const searchResults = await YouTube.search(spotifyInfo.searchQuery, { limit: 1, type: 'video' });
-        
-        if (searchResults.length === 0) {
-            throw new Error('No YouTube equivalent found for Spotify track');
-        }
-        
+// Normalize track format for consistent UI
+function toUnifiedTrack(track, source = 'lavalink') {
+    if (source === 'lavalink') {
         return {
-            title: spotifyInfo.title,
-            artist: spotifyInfo.artist,
-            url: searchResults[0].url,
-            duration: spotifyInfo.duration,
-            thumbnail: spotifyInfo.thumbnail,
-            source: 'spotify',
-            spotifyUrl: spotifyInfo.spotifyUrl,
-            requestedBy
+            info: {
+                title: track.info.title,
+                author: track.info.author,
+                length: track.info.length,
+                artworkUrl: track.info.artworkUrl,
+                thumbnail: track.info.thumbnail
+            },
+            requester: track.requester,
+            url: track.info.uri || track.url,
+            source: track.info.sourceName || 'lavalink',
+            encoded: track.encoded
         };
-    } catch (error) {
-        throw new Error(`Spotify track error: ${error.message}`);
-    }
-}
-
-async function getSoundCloudTrack(soundcloudUrl, requestedBy) {
-    try {
-        const info = await scdl.getInfo(soundcloudUrl);
+    } else {
         return {
-            title: info.title,
-            artist: info.user.username,
-            url: soundcloudUrl,
-            duration: Math.floor(info.duration / 1000),
-            thumbnail: info.artwork_url,
-            source: 'soundcloud',
-            requestedBy
+            info: {
+                title: track.title,
+                author: track.author,
+                length: (track.duration || 0) * 1000,
+                artworkUrl: track.thumbnail,
+                thumbnail: track.thumbnail
+            },
+            requester: track.requester,
+            url: track.url,
+            source: track.source || 'fallback'
         };
-    } catch (error) {
-        throw new Error(`SoundCloud track error: ${error.message}`);
     }
 }
 
-async function getYouTubeTrack(youtubeUrl, requestedBy) {
-    try {
-        let title, duration, thumbnail;
-        
-        try {
-            const videoInfo = await play.video_info(youtubeUrl);
-            title = videoInfo.video_details.title;
-            duration = videoInfo.video_details.durationInSec;
-            thumbnail = videoInfo.video_details.thumbnails[0]?.url;
-        } catch (playDlError) {
-            const videoId = youtubeUrl.split('v=')[1]?.split('&')[0];
-            if (videoId) {
-                const searchResult = await YouTube.getVideo(youtubeUrl);
-                title = searchResult.title;
-                duration = searchResult.duration;
-                thumbnail = searchResult.thumbnail?.url;
-            } else {
-                throw new Error('Unable to extract video info');
-            }
-        }
-        
-        return {
-            title,
-            url: youtubeUrl,
-            duration,
-            thumbnail,
-            source: 'youtube',
-            requestedBy
-        };
-    } catch (error) {
-        throw new Error(`YouTube track error: ${error.message}`);
-    }
-}
+// Create enhanced now playing embed with buttons
+function createNowPlayingEmbed(track, queue, guildSettings) {
+    const lang = guildSettings?.language || 'hi';
+    const messages = config.MESSAGES[lang];
 
-// Command shortcuts mapping
-const COMMAND_SHORTCUTS = {
-    'p': 'play',
-    'pl': 'playlist', 
-    's': 'skip',
-    'st': 'stop',
-    'ps': 'pause',
-    'r': 'resume',
-    'v': 'volume',
-    'q': 'queue',
-    'np': 'nowplaying',
-    'l': 'loop',
-    'h': 'help',
-    'j': 'join',
-    'lv': 'leave',
-    'sh': 'shuffle',
-    'ap': 'autoplay'
-};
+    const embed = new EmbedBuilder()
+        .setTitle(`${config.EMOJIS.MUSIC} ${messages.NOW_PLAYING}`)
+        .setDescription(`**${track.info.title}**\n\n` +
+            `${config.EMOJIS.PLAY} **Author:** ${track.info.author}\n` +
+            `⏱️ **Duration:** ${formatDuration(track.info.length)}\n` +
+            `👤 **Requested by:** ${track.requester}\n` +
+            `🔊 **Volume:** ${queue.volume}%\n` +
+            `${queue.loop ? '🔂 Loop: On' : '➡️ Loop: Off'}\n` +
+            `${queue.autoplay ? '🤖 Autoplay: On' : '🤖 Autoplay: Off'}`)
+        .setColor(config.COLORS.MUSIC)
+        .setThumbnail(track.info.artworkUrl || track.info.thumbnail)
+        .setTimestamp();
 
-// Audio player setup
-function createGuildAudioPlayer(guildId) {
-    if (audioPlayers.has(guildId)) {
-        return audioPlayers.get(guildId);
-    }
-
-    const player = createAudioPlayer();
-    audioPlayers.set(guildId, player);
-
-    player.on(AudioPlayerStatus.Playing, () => {
-        console.log(`[${guildId}] Audio player started playing`);
-    });
-
-    player.on(AudioPlayerStatus.Idle, () => {
-        console.log(`[${guildId}] Audio player finished playing`);
-        const queue = getQueue(guildId);
-        playNext(guildId);
-    });
-
-    player.on('error', error => {
-        console.error(`[${guildId}] Audio player error:`, error);
-        const queue = getQueue(guildId);
-        queue.nowPlaying = null;
-        
-        // Try to play next song after error
-        if (!queue.isEmpty()) {
-            setTimeout(() => playNext(guildId), 2000);
-        }
-    });
-
-    return player;
-}
-
-async function playNext(guildId) {
-    const queue = getQueue(guildId);
-    const player = audioPlayers.get(guildId);
-
-    if (!player) return;
-
-    let nextSong = queue.next();
-    
-    // If queue is empty and autoplay is enabled, get an autoplay track
-    if (!nextSong && queue.autoplay && queue.nowPlaying) {
-        console.log(`[${guildId}] Queue empty, trying autoplay...`);
-        const autoplayTrack = await getAutoplayTrack(queue.nowPlaying);
-        if (autoplayTrack) {
-            queue.add(autoplayTrack);
-            nextSong = queue.next();
-            console.log(`[${guildId}] Added autoplay track: ${autoplayTrack.title}`);
-        }
-    }
-    
-    if (!nextSong) {
-        queue.nowPlaying = null;
-        console.log(`[${guildId}] Queue finished, no more songs to play`);
-        return;
-    }
-
-    queue.nowPlaying = nextSong;
-    console.log(`[${guildId}] Playing: ${nextSong.title}`);
-
-    // Try multiple methods to get the audio stream based on source
-    let stream = null;
-    let retryCount = 0;
-    const maxRetries = 3;
-
-    while (!stream && retryCount < maxRetries) {
-        try {
-            if (nextSong.source === 'soundcloud') {
-                console.log(`[${guildId}] Streaming from SoundCloud...`);
-                stream = await scdl.download(nextSong.url, { quality: 'mp3' });
-                nextSong.streamType = 'arbitrary';
-            } else {
-                // YouTube source (including Spotify converted to YouTube)
-                if (retryCount === 0) {
-                    // Try play-dl first (more reliable)
-                    console.log(`[${guildId}] Trying play-dl...`);
-                    
-                    // Skip token refresh as it's causing issues
-                    // play-dl will handle tokens internally
-                    
-                    const streamInfo = await play.stream(nextSong.url, { 
-                        quality: 2,
-                        filter: 'audioonly',
-                    });
-                    
-                    // Store both stream and type for proper resource creation
-                    stream = streamInfo.stream;
-                    nextSong.streamType = streamInfo.type;
-                } else {
-                    // Fallback to ytdl-core with updated options
-                    console.log(`[${guildId}] Trying ytdl-core...`);
-                    stream = ytdl(nextSong.url, {
-                        filter: 'audioonly',
-                        quality: 'highestaudio',
-                        highWaterMark: 1 << 25,
-                        requestOptions: {
-                            headers: {
-                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                            }
-                        },
-                    });
-                }
-            }
-        } catch (error) {
-            console.error(`[${guildId}] Attempt ${retryCount + 1} failed:`, error.message);
-            retryCount++;
-            
-            if (retryCount >= maxRetries) {
-                console.error(`[${guildId}] All attempts failed for: ${nextSong.title}`);
-                queue.nowPlaying = null;
-                
-                // Skip to next song if available
-                if (!queue.isEmpty()) {
-                    setTimeout(() => playNext(guildId), 1000);
-                }
-                return;
-            }
-            
-            // Exponential backoff: 1s, 2s, 4s
-            const delayMs = Math.pow(2, retryCount) * 1000;
-            await new Promise(resolve => setTimeout(resolve, delayMs));
-        }
-    }
-
-    if (stream) {
-        try {
-            const resourceOptions = {
-                metadata: nextSong,
-                inlineVolume: true
-            };
-            
-            // Set input type if available (from play-dl)
-            if (nextSong.streamType) {
-                resourceOptions.inputType = nextSong.streamType;
-            }
-            
-            const resource = createAudioResource(stream, resourceOptions);
-
-            // Set initial volume
-            if (resource.volume) {
-                resource.volume.setVolume(queue.volume);
-            }
-
-            player.play(resource);
-            console.log(`[${guildId}] Successfully started playing: ${nextSong.title}`);
-        } catch (error) {
-            console.error(`[${guildId}] Error creating audio resource:`, error);
-            queue.nowPlaying = null;
-            
-            // Skip to next song if available
-            if (!queue.isEmpty()) {
-                setTimeout(() => playNext(guildId), 1000);
-            }
-        }
-    }
-}
-
-// Create interactive control buttons
-function createControlButtons() {
-    return new ActionRowBuilder()
+    const row1 = new ActionRowBuilder()
         .addComponents(
             new ButtonBuilder()
-                .setCustomId('music_pause')
-                .setLabel('⏸️ Pause')
-                .setStyle(ButtonStyle.Secondary),
+                .setCustomId('music_previous')
+                .setLabel('Previous')
+                .setEmoji('⏮️')
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(queue.history.length === 0),
             new ButtonBuilder()
-                .setCustomId('music_skip')
-                .setLabel('⏭️ Skip')
+                .setCustomId('music_pause')
+                .setLabel('Pause/Resume')
+                .setEmoji('⏯️')
                 .setStyle(ButtonStyle.Primary),
             new ButtonBuilder()
+                .setCustomId('music_skip')
+                .setLabel('Skip')
+                .setEmoji('⏭️')
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
                 .setCustomId('music_stop')
-                .setLabel('⏹️ Stop')
-                .setStyle(ButtonStyle.Danger),
+                .setLabel('Stop')
+                .setEmoji('⏹️')
+                .setStyle(ButtonStyle.Danger)
+        );
+
+    const row2 = new ActionRowBuilder()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId('music_loop')
+                .setLabel(queue.loop ? 'Loop: On' : 'Loop: Off')
+                .setEmoji('🔂')
+                .setStyle(queue.loop ? ButtonStyle.Success : ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId('music_autoplay')
+                .setLabel(queue.autoplay ? 'Auto: On' : 'Auto: Off')
+                .setEmoji('🤖')
+                .setStyle(queue.autoplay ? ButtonStyle.Success : ButtonStyle.Secondary),
             new ButtonBuilder()
                 .setCustomId('music_shuffle')
-                .setLabel('🔀 Shuffle')
+                .setLabel('Shuffle')
+                .setEmoji('🔀')
                 .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
                 .setCustomId('music_queue')
-                .setLabel('📋 Queue')
+                .setLabel('Queue')
+                .setEmoji('📋')
                 .setStyle(ButtonStyle.Secondary)
         );
+
+    return { embeds: [embed], components: [row1, row2] };
 }
 
-function createVolumeButtons() {
-    return new ActionRowBuilder()
-        .addComponents(
-            new ButtonBuilder()
-                .setCustomId('volume_down')
-                .setLabel('🔉 Vol-')
-                .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
-                .setCustomId('volume_up')
-                .setLabel('🔊 Vol+')
-                .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
-                .setCustomId('music_loop')
-                .setLabel('🔁 Loop')
-                .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
-                .setCustomId('music_autoplay')
-                .setLabel('🎵 AutoPlay')
-                .setStyle(ButtonStyle.Secondary)
-        );
+// Format duration helper
+function formatDuration(ms) {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+
+    if (hours > 0) {
+        return `${hours}:${String(minutes % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+    }
+    return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-// Auto-play functionality
-async function getAutoplayTrack(lastTrack) {
+// Auto play suggestions
+async function getAutoPlaySuggestion(lastTrack) {
     try {
-        if (!lastTrack || lastTrack.source !== 'youtube') return null;
-        
-        // Search for related videos
-        const searchQuery = `${lastTrack.title} similar music`;
-        const results = await YouTube.search(searchQuery, { limit: 5, type: 'video' });
-        
-        if (results.length > 0) {
-            // Pick a random result (not the same as the last track)
-            const filtered = results.filter(video => video.url !== lastTrack.url);
-            if (filtered.length > 0) {
-                const randomTrack = filtered[Math.floor(Math.random() * filtered.length)];
-                return {
-                    title: randomTrack.title,
-                    url: randomTrack.url,
-                    duration: randomTrack.duration,
-                    thumbnail: randomTrack.thumbnail?.url,
-                    source: 'youtube',
-                    autoplay: true,
-                    requestedBy: { username: 'AutoPlay', tag: 'AutoPlay#0000' }
-                };
-            }
+        const searchQuery = `${lastTrack.info.author} similar songs`;
+        const result = await lavalinkManager.search({
+            query: searchQuery,
+            source: config.SOURCES.YOUTUBE
+        }, lastTrack.requester);
+
+        if (result.tracks.length > 1) {
+            // Return a random track from results (excluding the first which might be the same)
+            const randomIndex = Math.floor(Math.random() * Math.min(result.tracks.length - 1, 5)) + 1;
+            return result.tracks[randomIndex];
         }
-        return null;
     } catch (error) {
-        console.error('Autoplay error:', error);
-        return null;
+        console.log('Autoplay suggestion failed:', error.message);
     }
+    return null;
 }
 
-// Prefix command handler
-async function handlePrefixCommand(message, commandName, args) {
-    const guildId = message.guild.id;
-    const member = message.member;
-    const voiceChannel = member?.voice?.channel;
-    
-    switch (commandName) {
-        case 'play':
-        case 'p':
-            if (!args[0]) return message.reply('❌ Please provide a song name, URL, or search query!');
-            if (!voiceChannel) return message.reply('❌ आपको पहले किसी voice channel में join करना होगा!');
-            
-            await handlePlayCommand(message, args.join(' '), voiceChannel);
-            break;
-            
-        case 'skip':
-        case 's':
-            await handleSkipCommand(message);
-            break;
-            
-        case 'stop':
-        case 'st':
-            await handleStopCommand(message);
-            break;
-            
-        case 'pause':
-        case 'ps':
-            await handlePauseCommand(message);
-            break;
-            
-        case 'resume':
-        case 'r':
-            await handleResumeCommand(message);
-            break;
-            
-        case 'volume':
-        case 'v':
-            const volume = parseInt(args[0]);
-            await handleVolumeCommand(message, volume);
-            break;
-            
-        case 'queue':
-        case 'q':
-            await handleQueueCommand(message);
-            break;
-            
-        case 'nowplaying':
-        case 'np':
-            await handleNowPlayingCommand(message);
-            break;
-            
-        case 'loop':
-        case 'l':
-            await handleLoopCommand(message);
-            break;
-            
-        case 'shuffle':
-        case 'sh':
-            await handleShuffleCommand(message);
-            break;
-            
-        case 'autoplay':
-        case 'ap':
-            await handleAutoplayCommand(message);
-            break;
-            
-        case 'help':
-        case 'h':
-            await handleHelpCommand(message);
-            break;
-            
-        case 'join':
-        case 'j':
-            if (!voiceChannel) return message.reply('❌ आपको पहले किसी voice channel में join करना होगा!');
-            await handleJoinCommand(message, voiceChannel);
-            break;
-            
-        case 'leave':
-        case 'lv':
-            await handleLeaveCommand(message);
-            break;
-            
-        default:
-            message.reply(`❌ Unknown command: \`${commandName}\`. Use \`${PREFIX}help\` for available commands.`);
-    }
-}
-
-// Prefix command implementations
-async function handlePlayCommand(message, query, voiceChannel) {
+// Fallback streaming functions
+async function createFallbackPlayer(guildId, voiceChannel, textChannel) {
     try {
-        let track;
-        
-        // Check if it's a URL
-        if (query.includes('http')) {
-            track = await getTrackFromUrl(query, message.author);
-        } else {
-            // Search YouTube
-            const results = await YouTube.search(query, { limit: 1, type: 'video' });
-            if (results.length === 0) {
-                return message.reply('❌ No results found!');
-            }
-            track = await getYouTubeTrack(results[0].url, message.author);
-        }
-        
-        // Join voice channel
         const connection = joinVoiceChannel({
             channelId: voiceChannel.id,
-            guildId: message.guild.id,
-            adapterCreator: message.guild.voiceAdapterCreator,
+            guildId: guildId,
+            adapterCreator: voiceChannel.guild.voiceAdapterCreator,
         });
-        
-        const queue = getQueue(message.guild.id);
-        const player = createGuildAudioPlayer(message.guild.id);
+
+        // Handle connection state changes
+        connection.on(VoiceConnectionStatus.Disconnected, () => {
+            console.log(`🔌 Voice connection disconnected for guild ${guildId}`);
+            cleanupFallbackPlayer(guildId);
+        });
+
+        connection.on(VoiceConnectionStatus.Destroyed, () => {
+            console.log(`💥 Voice connection destroyed for guild ${guildId}`);
+            cleanupFallbackPlayer(guildId);
+        });
+
+        const player = createAudioPlayer();
         connection.subscribe(player);
-        
-        if (queue.nowPlaying) {
-            queue.add(track);
-            const embed = new EmbedBuilder()
-                .setColor('#00ff00')
-                .setTitle('📋 Added to Queue')
-                .setDescription(`**${track.title}**\nPosition: ${queue.songs.length}`)
-                .setThumbnail(track.thumbnail);
-            
-            message.reply({ embeds: [embed], components: [createControlButtons()] });
-        } else {
-            queue.add(track);
-            playNext(message.guild.id);
-            
-            const embed = new EmbedBuilder()
-                .setColor('#00ff00')
-                .setTitle('🎵 Now Playing')
-                .setDescription(`**${track.title}**`)
-                .setThumbnail(track.thumbnail);
-            
-            message.reply({ embeds: [embed], components: [createControlButtons(), createVolumeButtons()] });
-        }
-        
-    } catch (error) {
-        console.error('Play command error:', error);
-        message.reply(`❌ Error: ${error.message}`);
-    }
-}
 
-async function handleHelpCommand(message) {
-    const embed = new EmbedBuilder()
-        .setColor('#0099ff')
-        .setTitle('🎵 Music Bot Commands')
-        .setDescription('All available commands with shortcuts')
-        .addFields(
-            {
-                name: '🎵 Music Controls',
-                value: `\`${PREFIX}play (!p)\` - Play a song\n\`${PREFIX}skip (!s)\` - Skip current song\n\`${PREFIX}stop (!st)\` - Stop playback\n\`${PREFIX}pause (!ps)\` - Pause playback\n\`${PREFIX}resume (!r)\` - Resume playback`,
-                inline: true
-            },
-            {
-                name: '🔊 Volume & Settings',
-                value: `\`${PREFIX}volume (!v)\` - Set volume (1-100)\n\`${PREFIX}loop (!l)\` - Toggle loop mode\n\`${PREFIX}shuffle (!sh)\` - Shuffle queue\n\`${PREFIX}autoplay (!ap)\` - Toggle autoplay`,
-                inline: true
-            },
-            {
-                name: '📋 Queue & Info',
-                value: `\`${PREFIX}queue (!q)\` - Show queue\n\`${PREFIX}nowplaying (!np)\` - Current song info\n\`${PREFIX}join (!j)\` - Join voice channel\n\`${PREFIX}leave (!lv)\` - Leave voice channel`,
-                inline: true
-            },
-            {
-                name: '🎶 Supported Sources',
-                value: '• YouTube URLs & Search\n• Spotify URLs & Playlists\n• SoundCloud URLs',
-                inline: false
-            }
-        )
-        .setFooter({ text: 'Use interactive buttons for quick controls!' });
-    
-    message.reply({ embeds: [embed] });
-}
+        global.connections.set(guildId, connection);
+        global.audioPlayers.set(guildId, player);
 
-// Simple implementations for other commands
-async function handleSkipCommand(message) {
-    const queue = getQueue(message.guild.id);
-    const player = audioPlayers.get(message.guild.id);
-    
-    if (!queue.nowPlaying) {
-        return message.reply('❌ No song is currently playing!');
-    }
-    
-    if (player) {
-        player.stop();
-    }
-    
-    message.reply('⏭️ Skipped current song!');
-}
-
-async function handleStopCommand(message) {
-    const queue = getQueue(message.guild.id);
-    const player = audioPlayers.get(message.guild.id);
-    
-    if (player) {
-        player.stop();
-        queue.clear();
-        message.reply('⏹️ Stopped and cleared queue!');
-    } else {
-        message.reply('❌ Nothing is playing!');
-    }
-}
-
-async function handlePauseCommand(message) {
-    const queue = getQueue(message.guild.id);
-    const player = audioPlayers.get(message.guild.id);
-    
-    if (player && queue.nowPlaying) {
-        player.pause();
-        message.reply('⏸️ Paused!');
-    } else {
-        message.reply('❌ Nothing is playing!');
-    }
-}
-
-async function handleResumeCommand(message) {
-    const queue = getQueue(message.guild.id);
-    const player = audioPlayers.get(message.guild.id);
-    
-    if (player && queue.nowPlaying) {
-        player.unpause();
-        message.reply('▶️ Resumed!');
-    } else {
-        message.reply('❌ Nothing is paused!');
-    }
-}
-
-async function handleVolumeCommand(message, volume) {
-    if (isNaN(volume) || volume < 1 || volume > 100) {
-        return message.reply('❌ Please provide a volume between 1-100!');
-    }
-    
-    const queue = getQueue(message.guild.id);
-    queue.volume = volume / 100;
-    
-    message.reply(`🔊 Volume set to ${volume}%!`);
-}
-
-async function handleQueueCommand(message) {
-    const queue = getQueue(message.guild.id);
-    
-    if (queue.isEmpty() && !queue.nowPlaying) {
-        return message.reply('❌ Queue is empty!');
-    }
-    
-    const embed = new EmbedBuilder()
-        .setColor('#0099ff')
-        .setTitle('📋 Current Queue');
-    
-    let description = '';
-    
-    if (queue.nowPlaying) {
-        description += `**Now Playing:**\n🎵 ${queue.nowPlaying.title}\n\n`;
-    }
-    
-    if (queue.songs.length > 0) {
-        description += '**Up Next:**\n';
-        queue.songs.slice(0, 10).forEach((song, index) => {
-            description += `${index + 1}. ${song.title}\n`;
+        player.on(AudioPlayerStatus.Idle, () => {
+            handleFallbackTrackEnd(guildId);
         });
-        
-        if (queue.songs.length > 10) {
-            description += `\n... and ${queue.songs.length - 10} more songs`;
-        }
+
+        player.on('error', (error) => {
+            console.error(`Fallback player error: ${error.message}`);
+            handleFallbackTrackEnd(guildId);
+        });
+
+        return player;
+    } catch (error) {
+        console.error('Failed to create fallback player:', error);
+        return null;
     }
-    
-    embed.setDescription(description || 'Queue is empty');
-    
-    message.reply({ embeds: [embed] });
 }
 
-async function handleNowPlayingCommand(message) {
-    const queue = getQueue(message.guild.id);
-    
-    if (!queue.nowPlaying) {
-        return message.reply('❌ Nothing is currently playing!');
-    }
-    
-    const embed = new EmbedBuilder()
-        .setColor('#00ff00')
-        .setTitle('🎵 Now Playing')
-        .setDescription(`**${queue.nowPlaying.title}**`)
-        .setThumbnail(queue.nowPlaying.thumbnail)
-        .addFields(
-            { name: 'Source', value: queue.nowPlaying.source?.toUpperCase() || 'YOUTUBE', inline: true },
-            { name: 'Requested by', value: queue.nowPlaying.requestedBy.username, inline: true },
-            { name: 'Volume', value: `${Math.round(queue.volume * 100)}%`, inline: true }
-        );
-    
-    message.reply({ embeds: [embed], components: [createControlButtons(), createVolumeButtons()] });
-}
+async function playFallbackTrack(guildId, track) {
+    const player = global.audioPlayers.get(guildId);
+    if (!player) return false;
 
-async function handleLoopCommand(message) {
-    const queue = getQueue(message.guild.id);
-    queue.loop = !queue.loop;
-    message.reply(`🔁 Loop ${queue.loop ? 'enabled' : 'disabled'}!`);
-}
-
-async function handleShuffleCommand(message) {
-    const queue = getQueue(message.guild.id);
-    
-    if (queue.songs.length < 2) {
-        return message.reply('❌ Not enough songs in queue to shuffle!');
-    }
-    
-    queue.shuffle();
-    message.reply('🔀 Queue shuffled!');
-}
-
-async function handleAutoplayCommand(message) {
-    const queue = getQueue(message.guild.id);
-    queue.autoplay = !queue.autoplay;
-    message.reply(`🎵 Autoplay ${queue.autoplay ? 'enabled' : 'disabled'}!`);
-}
-
-async function handleJoinCommand(message, voiceChannel) {
     try {
-        const connection = joinVoiceChannel({
-            channelId: voiceChannel.id,
-            guildId: message.guild.id,
-            adapterCreator: message.guild.voiceAdapterCreator,
+        let stream = null;
+        
+        // Try play-dl first
+        if (track.url && (track.url.includes('youtube.com') || track.url.includes('youtu.be'))) {
+            try {
+                stream = await play.stream(track.url);
+                console.log(`[${guildId}] Playing with play-dl: ${track.title}`);
+            } catch (error) {
+                console.log(`[${guildId}] play-dl failed, trying ytdl-core...`);
+            }
+        }
+
+        // Try ytdl-core as fallback
+        if (!stream && track.url) {
+            try {
+                stream = ytdl(track.url, {
+                    filter: 'audioonly',
+                    quality: 'highestaudio',
+                    highWaterMark: 1 << 25,
+                    requestOptions: {
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                            'Cookie': process.env.YOUTUBE_COOKIE || ''
+                        }
+                    }
+                });
+                console.log(`[${guildId}] Playing with ytdl-core: ${track.title}`);
+            } catch (error) {
+                console.log(`[${guildId}] ytdl-core failed: ${error.message}`);
+                return false;
+            }
+        }
+
+        if (!stream) return false;
+
+        const audioStream = stream.stream || stream;
+        const resource = createAudioResource(audioStream, {
+            inputType: stream.type ? stream.type : undefined,
+            inlineVolume: true
         });
         
-        message.reply(`🎵 Joined ${voiceChannel.name}!`);
+        // Apply volume from queue
+        const queue = getQueue(guildId);
+        if (resource.volume) {
+            resource.volume.setVolume(queue.volume / 100);
+        }
+
+        player.play(resource);
+        return true;
     } catch (error) {
-        message.reply('❌ Failed to join voice channel!');
+        console.error(`Failed to play fallback track: ${error.message}`);
+        return false;
     }
 }
 
-async function handleLeaveCommand(message) {
-    const queue = getQueue(message.guild.id);
-    const player = audioPlayers.get(message.guild.id);
+async function handleFallbackTrackEnd(guildId) {
+    const queue = getQueue(guildId);
+    
+    if (queue.loop && queue.nowPlaying) {
+        await playFallbackTrack(guildId, queue.nowPlaying);
+        return;
+    }
+
+    const nextTrack = queue.next();
+    
+    if (nextTrack) {
+        queue.nowPlaying = nextTrack;
+        await playFallbackTrack(guildId, nextTrack);
+    } else if (queue.autoplay && queue.nowPlaying) {
+        const suggestion = await getFallbackAutoplaySuggestion(queue.nowPlaying);
+        if (suggestion) {
+            queue.add(suggestion);
+            queue.nowPlaying = suggestion;
+            await playFallbackTrack(guildId, suggestion);
+        } else {
+            queue.clear();
+        }
+    } else {
+        queue.clear();
+    }
+}
+
+async function getFallbackAutoplaySuggestion(lastTrack) {
+    try {
+        const searchQuery = `${lastTrack.author} similar songs`;
+        const results = await YouTube.search(searchQuery, { limit: 5 });
+        
+        if (results.length > 1) {
+            const randomIndex = Math.floor(Math.random() * Math.min(results.length - 1, 4)) + 1;
+            const video = results[randomIndex];
+            
+            return {
+                title: video.title,
+                author: video.channel?.name || 'Unknown',
+                url: video.url,
+                duration: video.duration,
+                thumbnail: video.thumbnail?.url,
+                source: 'youtube',
+                requester: lastTrack.requester
+            };
+        }
+    } catch (error) {
+        console.log('Fallback autoplay suggestion failed:', error.message);
+    }
+    return null;
+}
+
+// Cleanup fallback player resources
+function cleanupFallbackPlayer(guildId) {
+    const player = global.audioPlayers.get(guildId);
+    const connection = global.connections.get(guildId);
     
     if (player) {
         player.stop();
+        global.audioPlayers.delete(guildId);
     }
     
+    if (connection) {
+        connection.destroy();
+        global.connections.delete(guildId);
+    }
+    
+    const queue = getQueue(guildId);
     queue.clear();
-    message.reply('👋 Left voice channel!');
+    global.queues.delete(guildId);
+    
+    console.log(`🧹 Cleaned up fallback player for guild ${guildId}`);
 }
 
-// Button interaction handler
-async function handleButtonInteraction(interaction) {
-    const guildId = interaction.guild.id;
-    const queue = getQueue(guildId);
-    const player = audioPlayers.get(guildId);
-    
-    switch (interaction.customId) {
-        case 'music_pause':
-            if (player && queue.nowPlaying) {
-                player.pause();
-                interaction.reply({ content: '⏸️ Paused!', ephemeral: true });
-            } else {
-                interaction.reply({ content: '❌ Nothing is playing!', ephemeral: true });
-            }
-            break;
-            
-        case 'music_skip':
-            if (player && queue.nowPlaying) {
-                player.stop();
-                interaction.reply({ content: '⏭️ Skipped!', ephemeral: true });
-            } else {
-                interaction.reply({ content: '❌ Nothing is playing!', ephemeral: true });
-            }
-            break;
-            
-        case 'music_stop':
-            if (player) {
-                player.stop();
-                queue.clear();
-                interaction.reply({ content: '⏹️ Stopped and cleared queue!', ephemeral: true });
-            } else {
-                interaction.reply({ content: '❌ Nothing is playing!', ephemeral: true });
-            }
-            break;
-            
-        case 'music_shuffle':
-            if (queue.songs.length > 1) {
-                queue.shuffle();
-                interaction.reply({ content: '🔀 Queue shuffled!', ephemeral: true });
-            } else {
-                interaction.reply({ content: '❌ Not enough songs in queue!', ephemeral: true });
-            }
-            break;
-            
-        case 'music_loop':
-            queue.loop = !queue.loop;
-            interaction.reply({ content: `🔁 Loop ${queue.loop ? 'enabled' : 'disabled'}!`, ephemeral: true });
-            break;
-            
-        case 'music_autoplay':
-            queue.autoplay = !queue.autoplay;
-            interaction.reply({ content: `🎵 Autoplay ${queue.autoplay ? 'enabled' : 'disabled'}!`, ephemeral: true });
-            break;
-            
-        case 'volume_up':
-            if (queue.volume < 1.0) {
-                queue.volume = Math.min(1.0, queue.volume + 0.1);
-                interaction.reply({ content: `🔊 Volume: ${Math.round(queue.volume * 100)}%`, ephemeral: true });
-            } else {
-                interaction.reply({ content: '❌ Volume already at maximum!', ephemeral: true });
-            }
-            break;
-            
-        case 'volume_down':
-            if (queue.volume > 0.1) {
-                queue.volume = Math.max(0.1, queue.volume - 0.1);
-                interaction.reply({ content: `🔉 Volume: ${Math.round(queue.volume * 100)}%`, ephemeral: true });
-            } else {
-                interaction.reply({ content: '❌ Volume already at minimum!', ephemeral: true });
-            }
-            break;
-            
-        case 'music_queue':
-            const queueEmbed = new EmbedBuilder()
-                .setColor('#0099ff')
-                .setTitle('📋 Current Queue');
-            
-            let description = '';
-            
-            if (queue.nowPlaying) {
-                description += `**Now Playing:**\n🎵 ${queue.nowPlaying.title}\n\n`;
-            }
-            
-            if (queue.songs.length > 0) {
-                description += '**Up Next:**\n';
-                queue.songs.slice(0, 5).forEach((song, index) => {
-                    description += `${index + 1}. ${song.title}\n`;
-                });
-                
-                if (queue.songs.length > 5) {
-                    description += `\n... and ${queue.songs.length - 5} more songs`;
+// Auto-cleanup idle players
+function setupIdleCleanup() {
+    setInterval(() => {
+        for (const [guildId, queue] of global.queues.entries()) {
+            if (!queue.nowPlaying && queue.isEmpty()) {
+                // Check if player has been idle for 5 minutes
+                const lastActivity = queue.lastActivity || Date.now();
+                if (Date.now() - lastActivity > 5 * 60 * 1000) {
+                    console.log(`🧹 Auto-cleaning up idle player for guild ${guildId}`);
+                    cleanupFallbackPlayer(guildId);
                 }
             }
+        }
+    }, 60000); // Check every minute
+}
+
+// Bot Events
+client.on('ready', async () => {
+    console.log(`🎵 ${client.user.username} music bot is online!`);
+    console.log(`📊 Serving ${client.guilds.cache.size} servers`);
+
+    try {
+        // Initialize Lavalink Manager after client is ready
+        lavalinkManager = new LavalinkManager({
+            nodes: [
+                {
+                    authorization: process.env.LAVALINK_PASSWORD || config.LAVALINK.PASSWORD,
+                    host: process.env.LAVALINK_HOST || config.LAVALINK.HOST,
+                    port: parseInt(process.env.LAVALINK_PORT) || config.LAVALINK.PORT,
+                    id: config.LAVALINK.IDENTIFIER,
+                }
+            ],
+            sendToShard: (guildId, payload) => {
+                const guild = client.guilds.cache.get(guildId);
+                if (guild?.shard) {
+                    guild.shard.send(payload);
+                } else if (client.ws) {
+                    client.ws.send(payload);
+                }
+            },
+            autoSkip: true,
+            client: {
+                id: client.user.id,
+                username: client.user.username
+            },
+        });
+
+        // Add comprehensive error handlers for Lavalink
+        lavalinkManager.on('nodeError', (node, error) => {
+            console.error(`❌ Lavalink node error: ${error.message}`);
+            lavalinkAvailable = false;
+        });
+
+        lavalinkManager.on('nodeDisconnect', (node) => {
+            console.log(`🔌 Lavalink node disconnected: ${node.options.id}`);
+            lavalinkAvailable = false;
+        });
+
+        lavalinkManager.on('nodeConnect', (node) => {
+            console.log(`🔗 Lavalink node connected: ${node.options.id}`);
+            lavalinkAvailable = true;
+        });
+
+        lavalinkManager.on('error', (error) => {
+            console.error(`❌ Lavalink manager error: ${error.message}`);
+            lavalinkAvailable = false;
+        });
+
+        // Add NodeManager error handler to prevent ERR_UNHANDLED_ERROR
+        lavalinkManager.nodeManager.on('error', (error) => {
+            console.error(`❌ Lavalink NodeManager error: ${error.message}`);
+            lavalinkAvailable = false;
+        });
+
+        // Initialize Lavalink
+        await lavalinkManager.init(client.user);
+        // Don't set lavalinkAvailable = true here, wait for nodeConnect event
+        console.log('🔗 Lavalink Manager initialized successfully!');
+        
+        // Setup Lavalink events
+        setupLavalinkEvents();
+        
+    } catch (error) {
+        console.error('⚠️ Lavalink initialization failed:', error.message);
+        console.log('🎵 Bot will use fallback streaming methods...');
+        lavalinkAvailable = false;
+    }
+
+    // Register slash commands
+    try {
+        await registerSlashCommands();
+    } catch (error) {
+        console.error('⚠️ Slash command registration failed:', error.message);
+    }
+
+    // Setup cleanup for idle players
+    setupIdleCleanup();
+});
+
+// Setup Lavalink Events
+function setupLavalinkEvents() {
+    if (!lavalinkManager) return;
+    
+    lavalinkManager.on('trackStart', async (player, track) => {
+    const queue = getQueue(player.guildId);
+    queue.nowPlaying = track;
+
+    if (queue.textChannel) {
+        const guildSettings = getGuildSettings(player.guildId);
+        const nowPlayingMessage = createNowPlayingEmbed(track, queue, guildSettings);
+        
+        try {
+            await queue.textChannel.send(nowPlayingMessage);
+        } catch (error) {
+            console.log('Could not send now playing message:', error.message);
+        }
+    }
+});
+
+lavalinkManager.on('trackEnd', async (player, track, payload) => {
+    const queue = getQueue(player.guildId);
+    
+    if (queue.loop) {
+        // Loop current song
+        await player.play({ track: track.encoded });
+        return;
+    }
+
+    const nextTrack = queue.next();
+    
+    if (nextTrack) {
+        await player.play({ track: nextTrack.encoded });
+    } else if (queue.autoplay && track) {
+        // Try to get autoplay suggestion
+        const suggestion = await getAutoPlaySuggestion(track);
+        if (suggestion) {
+            queue.add(suggestion);
+            await player.play({ track: suggestion.encoded });
+        } else {
+            queue.clear();
+        }
+    } else {
+        queue.clear();
+    }
+});
+
+lavalinkManager.on('playerEmpty', async (player) => {
+    const queue = getQueue(player.guildId);
+    if (queue.textChannel) {
+        const embed = new EmbedBuilder()
+            .setTitle(`${config.EMOJIS.SUCCESS} Queue Finished`)
+            .setDescription('Queue has ended. Add more songs to continue!')
+            .setColor(config.COLORS.SUCCESS);
+        
+        try {
+            await queue.textChannel.send({ embeds: [embed] });
+        } catch (error) {
+            console.log('Could not send queue finished message:', error.message);
+        }
+    }
+    
+    // Clean up
+    setTimeout(() => {
+        if (queue.isEmpty()) {
+            player.destroy();
+            global.queues.delete(player.guildId);
+        }
+    }, 30000); // 30 seconds delay before cleanup
+    });
+}
+
+// Handle prefix and slash commands
+client.on('messageCreate', async (message) => {
+    if (message.author.bot || !message.guild) return;
+
+    const guildSettings = getGuildSettings(message.guild.id);
+    const prefix = guildSettings.prefix;
+
+    if (!message.content.startsWith(prefix)) return;
+
+    const args = message.content.slice(prefix.length).trim().split(/ +/);
+    const commandName = args.shift().toLowerCase();
+
+    // Check for command aliases
+    const actualCommand = config.ALIASES[commandName] || commandName;
+
+    // Log command usage
+    logCommand(message.guild.id, message.author.id, actualCommand);
+
+    try {
+        await handleCommand(actualCommand, message, args, guildSettings);
+    } catch (error) {
+        console.error('Command execution error:', error);
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`${config.EMOJIS.ERROR} Error`)
+            .setDescription(config.MESSAGES[guildSettings.language || 'hi'].ERROR_OCCURRED)
+            .setColor(config.COLORS.ERROR);
+
+        await message.reply({ embeds: [embed] });
+    }
+});
+
+// Handle slash commands
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isChatInputCommand() && !interaction.isButton()) return;
+
+    const guildSettings = getGuildSettings(interaction.guild.id);
+
+    try {
+        if (interaction.isChatInputCommand()) {
+            // Log command usage
+            logCommand(interaction.guild.id, interaction.user.id, interaction.commandName);
+            await handleSlashCommand(interaction, guildSettings);
+        } else if (interaction.isButton()) {
+            await handleButtonInteraction(interaction, guildSettings);
+        }
+    } catch (error) {
+        console.error('Interaction error:', error);
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`${config.EMOJIS.ERROR} Error`)
+            .setDescription(config.MESSAGES[guildSettings.language || 'hi'].ERROR_OCCURRED)
+            .setColor(config.COLORS.ERROR);
+
+        const replyOptions = { embeds: [embed], ephemeral: true };
+        
+        if (interaction.replied || interaction.deferred) {
+            await interaction.followUp(replyOptions);
+        } else {
+            await interaction.reply(replyOptions);
+        }
+    }
+});
+
+// Command handler for prefix commands
+async function handleCommand(command, message, args, guildSettings) {
+    const lang = guildSettings.language || 'hi';
+    const messages = config.MESSAGES[lang];
+
+    switch (command) {
+        case 'play':
+        case 'p':
+            await handlePlayCommand(message, args, guildSettings);
+            break;
+        
+        case 'skip':
+        case 's':
+            await handleSkipCommand(message, guildSettings);
+            break;
+        
+        case 'stop':
+        case 'st':
+            await handleStopCommand(message, guildSettings);
+            break;
+        
+        case 'pause':
+            await handlePauseCommand(message, guildSettings);
+            break;
+        
+        case 'resume':
+            await handleResumeCommand(message, guildSettings);
+            break;
+        
+        case 'queue':
+        case 'q':
+            await handleQueueCommand(message, guildSettings);
+            break;
+        
+        case 'volume':
+        case 'v':
+            await handleVolumeCommand(message, args, guildSettings);
+            break;
+        
+        case 'loop':
+        case 'l':
+            await handleLoopCommand(message, guildSettings);
+            break;
+        
+        case 'autoplay':
+            await handleAutoplayCommand(message, guildSettings);
+            break;
+        
+        case 'shuffle':
+            await handleShuffleCommand(message, guildSettings);
+            break;
+        
+        case 'clear':
+            await handleClearCommand(message, guildSettings);
+            break;
+        
+        case 'nowplaying':
+        case 'np':
+            await handleNowPlayingCommand(message, guildSettings);
+            break;
+        
+        case 'setprefix':
+            await handleSetPrefixCommand(message, args, guildSettings);
+            break;
+        
+        case 'help':
+        case 'h':
+            await handleHelpCommand(message, guildSettings);
+            break;
+        
+        default:
+            const embed = new EmbedBuilder()
+                .setTitle(`${config.EMOJIS.ERROR} Unknown Command`)
+                .setDescription(`Command \`${command}\` not found! Use \`${guildSettings.prefix}help\` for available commands.`)
+                .setColor(config.COLORS.ERROR);
+            await message.reply({ embeds: [embed] });
+    }
+}
+
+// Play command handler with fallback
+async function handlePlayCommand(message, args, guildSettings) {
+    const lang = guildSettings.language || 'hi';
+    const messages = config.MESSAGES[lang];
+
+    if (!message.member.voice.channel) {
+        const embed = new EmbedBuilder()
+            .setTitle(`${config.EMOJIS.ERROR} Error`)
+            .setDescription(messages.NO_VOICE_CHANNEL)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    if (!args.length) {
+        const embed = new EmbedBuilder()
+            .setTitle(`${config.EMOJIS.WARNING} Missing Query`)
+            .setDescription(`Please provide a song name or URL!\nExample: \`${guildSettings.prefix}play Tum Hi Ho\``)
+            .setColor(config.COLORS.WARNING);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    const query = args.join(' ');
+    const queue = getQueue(message.guild.id);
+    
+    // Set channels for queue
+    queue.textChannel = message.channel;
+    queue.voiceChannel = message.member.voice.channel;
+
+    // Send loading message
+    const loadingEmbed = new EmbedBuilder()
+        .setDescription(`${config.EMOJIS.LOADING} ${messages.LOADING}`)
+        .setColor(config.COLORS.INFO);
+    const loadingMsg = await message.reply({ embeds: [loadingEmbed] });
+
+    try {
+        if (lavalinkAvailable && lavalinkManager) {
+            // Use Lavalink if available
+            const result = await lavalinkManager.search({
+                query,
+                source: config.SOURCES.DEFAULT
+            }, message.author);
+
+            if (!result.tracks.length) {
+                return await handleFallbackSearch(message, query, loadingMsg, guildSettings, messages);
+            }
+
+            // Get or create player
+            let player = lavalinkManager.getPlayer(message.guild.id);
+            if (!player) {
+                player = lavalinkManager.createPlayer({
+                    guildId: message.guild.id,
+                    voiceChannelId: message.member.voice.channel.id,
+                    textChannelId: message.channel.id,
+                    selfDeaf: true,
+                    volume: guildSettings.volume || 50
+                });
+                await player.connect();
+            }
+
+            const track = result.tracks[0];
+            track.requester = message.author;
+
+            if (player.queue.current) {
+                queue.add(track);
+                player.queue.add(track);
+
+                const embed = new EmbedBuilder()
+                    .setTitle(`${config.EMOJIS.SUCCESS} ${messages.SONG_ADDED}`)
+                    .setDescription(`**${track.info.title}**\nby ${track.info.author}`)
+                    .addFields(
+                        { name: '⏱️ Duration', value: formatDuration(track.info.length), inline: true },
+                        { name: '📍 Position', value: `${queue.size()}`, inline: true }
+                    )
+                    .setThumbnail(track.info.artworkUrl || track.info.thumbnail)
+                    .setColor(config.COLORS.SUCCESS);
+
+                await loadingMsg.edit({ embeds: [embed] });
+            } else {
+                queue.nowPlaying = track;
+                await player.play({ track: track.encoded });
+                await loadingMsg.delete().catch(() => {});
+            }
+        } else {
+            // Use fallback methods
+            await handleFallbackSearch(message, query, loadingMsg, guildSettings, messages);
+        }
+
+    } catch (error) {
+        console.error('Play command error:', error);
+        // Try fallback if Lavalink fails
+        await handleFallbackSearch(message, query, loadingMsg, guildSettings, messages);
+    }
+}
+
+async function handleFallbackSearch(message, query, loadingMsg, guildSettings, messages) {
+    try {
+        // Search using YouTube SR
+        let results;
+        
+        if (ytdl.validateURL(query)) {
+            // Direct URL
+            try {
+                const info = await ytdl.getInfo(query);
+                results = [{
+                    title: info.videoDetails.title,
+                    author: info.videoDetails.author.name,
+                    url: query,
+                    duration: parseInt(info.videoDetails.lengthSeconds),
+                    thumbnail: info.videoDetails.thumbnails[0]?.url,
+                }];
+            } catch (error) {
+                console.log('ytdl getInfo failed, trying search...');
+                results = await YouTube.search(query, { limit: 1 });
+            }
+        } else {
+            // Search query
+            results = await YouTube.search(query, { limit: 1 });
+        }
+
+        if (!results || results.length === 0) {
+            const embed = new EmbedBuilder()
+                .setTitle(`${config.EMOJIS.ERROR} ${messages.NO_RESULTS}`)
+                .setColor(config.COLORS.ERROR);
+            return await loadingMsg.edit({ embeds: [embed] });
+        }
+
+        const video = results[0];
+        const track = {
+            title: video.title,
+            author: video.channel?.name || video.author || 'Unknown',
+            url: video.url,
+            duration: video.durationInSec || video.duration,
+            thumbnail: video.thumbnail?.url,
+            source: 'youtube',
+            requester: message.author
+        };
+
+        const queue = getQueue(message.guild.id);
+
+        // Create fallback player if needed
+        let player = global.audioPlayers.get(message.guild.id);
+        if (!player) {
+            player = await createFallbackPlayer(message.guild.id, message.member.voice.channel, message.channel);
+            if (!player) {
+                const embed = new EmbedBuilder()
+                    .setDescription('Failed to join voice channel!')
+                    .setColor(config.COLORS.ERROR);
+                return await loadingMsg.edit({ embeds: [embed] });
+            }
+        }
+
+        if (queue.nowPlaying) {
+            // Add to queue
+            queue.add(track);
+
+            const embed = new EmbedBuilder()
+                .setTitle(`${config.EMOJIS.SUCCESS} ${messages.SONG_ADDED}`)
+                .setDescription(`**${track.title}**\nby ${track.author}`)
+                .addFields(
+                    { name: '⏱️ Duration', value: formatDuration((track.duration || 0) * 1000), inline: true },
+                    { name: '📍 Position', value: `${queue.size()}`, inline: true },
+                    { name: '🎵 Mode', value: 'Fallback Streaming', inline: true }
+                )
+                .setThumbnail(track.thumbnail)
+                .setColor(config.COLORS.SUCCESS);
+
+            await loadingMsg.edit({ embeds: [embed] });
+        } else {
+            // Play immediately
+            const unifiedTrack = toUnifiedTrack(track, 'fallback');
+            queue.nowPlaying = unifiedTrack;
+            const success = await playFallbackTrack(message.guild.id, track);
             
-            queueEmbed.setDescription(description || 'Queue is empty');
-            interaction.reply({ embeds: [queueEmbed], ephemeral: true });
+            if (success) {
+                // Send now playing embed with buttons
+                const guildSettings = getGuildSettings(message.guild.id);
+                const nowPlayingMessage = createNowPlayingEmbed(unifiedTrack, queue, guildSettings);
+                
+                try {
+                    await loadingMsg.edit(nowPlayingMessage);
+                } catch (error) {
+                    console.log('Could not edit to now playing message:', error.message);
+                    const fallbackEmbed = new EmbedBuilder()
+                        .setTitle(`${config.EMOJIS.MUSIC} Now Playing (Fallback Mode)`)
+                        .setDescription(`**${track.title}**\nby ${track.author}`)
+                        .setThumbnail(track.thumbnail)
+                        .setColor(config.COLORS.MUSIC);
+
+                    await loadingMsg.edit({ embeds: [fallbackEmbed] });
+                }
+            } else {
+                const embed = new EmbedBuilder()
+                    .setDescription('Failed to play the track!')
+                    .setColor(config.COLORS.ERROR);
+                await loadingMsg.edit({ embeds: [embed] });
+            }
+        }
+
+    } catch (error) {
+        console.error('Fallback search error:', error);
+        const embed = new EmbedBuilder()
+            .setTitle(`${config.EMOJIS.ERROR} Error`)
+            .setDescription(messages.ERROR_OCCURRED)
+            .setColor(config.COLORS.ERROR);
+        await loadingMsg.edit({ embeds: [embed] });
+    }
+}
+
+// Additional command handlers with fallback support
+async function handleSkipCommand(message, guildSettings) {
+    const lang = guildSettings.language || 'hi';
+    const messages = config.MESSAGES[lang];
+    const queue = getQueue(message.guild.id);
+
+    if (!queue.nowPlaying) {
+        const embed = new EmbedBuilder()
+            .setDescription(messages.NO_SONG_PLAYING)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    const currentTrack = queue.nowPlaying;
+    
+    if (lavalinkAvailable && lavalinkManager) {
+        const player = lavalinkManager.getPlayer(message.guild.id);
+        if (player) {
+            await player.skip();
+        }
+    } else {
+        // Use fallback method
+        const player = global.audioPlayers.get(message.guild.id);
+        if (player) {
+            player.stop(); // This will trigger handleFallbackTrackEnd
+        }
+    }
+
+    const embed = new EmbedBuilder()
+        .setTitle(`${config.EMOJIS.SKIP} ${messages.SONG_SKIPPED}`)
+        .setDescription(`**${currentTrack.title || currentTrack.info?.title}**`)
+        .setColor(config.COLORS.SUCCESS);
+    await message.reply({ embeds: [embed] });
+}
+
+async function handleStopCommand(message, guildSettings) {
+    const lang = guildSettings.language || 'hi';
+    const messages = config.MESSAGES[lang];
+    const queue = getQueue(message.guild.id);
+
+    if (!queue.nowPlaying && queue.isEmpty()) {
+        const embed = new EmbedBuilder()
+            .setDescription(messages.NO_SONG_PLAYING)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    if (lavalinkAvailable && lavalinkManager) {
+        const player = lavalinkManager.getPlayer(message.guild.id);
+        if (player) {
+            await player.destroy();
+        }
+    } else {
+        // Use fallback method
+        const player = global.audioPlayers.get(message.guild.id);
+        const connection = global.connections.get(message.guild.id);
+        
+        if (player) {
+            player.stop();
+            global.audioPlayers.delete(message.guild.id);
+        }
+        
+        if (connection) {
+            connection.destroy();
+            global.connections.delete(message.guild.id);
+        }
+    }
+
+    queue.clear();
+    global.queues.delete(message.guild.id);
+
+    const embed = new EmbedBuilder()
+        .setTitle(`${config.EMOJIS.STOP} ${messages.MUSIC_STOPPED}`)
+        .setColor(config.COLORS.SUCCESS);
+    await message.reply({ embeds: [embed] });
+}
+
+async function handlePauseCommand(message, guildSettings) {
+    const lang = guildSettings.language || 'hi';
+    const messages = config.MESSAGES[lang];
+    const queue = getQueue(message.guild.id);
+
+    if (!queue.nowPlaying) {
+        const embed = new EmbedBuilder()
+            .setDescription(messages.NO_SONG_PLAYING)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    if (lavalinkAvailable && lavalinkManager) {
+        const player = lavalinkManager.getPlayer(message.guild.id);
+        if (player && !player.paused) {
+            await player.pause();
+            const embed = new EmbedBuilder()
+                .setTitle(`${config.EMOJIS.PAUSE} ${messages.MUSIC_PAUSED}`)
+                .setColor(config.COLORS.SUCCESS);
+            await message.reply({ embeds: [embed] });
+        } else {
+            const embed = new EmbedBuilder()
+                .setDescription('Music is already paused!')
+                .setColor(config.COLORS.WARNING);
+            await message.reply({ embeds: [embed] });
+        }
+    } else {
+        // Use fallback method
+        const player = global.audioPlayers.get(message.guild.id);
+        if (player && player.state.status === AudioPlayerStatus.Playing) {
+            player.pause();
+            const embed = new EmbedBuilder()
+                .setTitle(`${config.EMOJIS.PAUSE} ${messages.MUSIC_PAUSED}`)
+                .setColor(config.COLORS.SUCCESS);
+            await message.reply({ embeds: [embed] });
+        } else {
+            const embed = new EmbedBuilder()
+                .setDescription('Music is already paused!')
+                .setColor(config.COLORS.WARNING);
+            await message.reply({ embeds: [embed] });
+        }
+    }
+}
+
+async function handleResumeCommand(message, guildSettings) {
+    const lang = guildSettings.language || 'hi';
+    const messages = config.MESSAGES[lang];
+    const queue = getQueue(message.guild.id);
+
+    if (!queue.nowPlaying) {
+        const embed = new EmbedBuilder()
+            .setDescription(messages.NO_SONG_PLAYING)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    if (lavalinkAvailable && lavalinkManager) {
+        const player = lavalinkManager.getPlayer(message.guild.id);
+        if (player && player.paused) {
+            await player.resume();
+            const embed = new EmbedBuilder()
+                .setTitle(`${config.EMOJIS.PLAY} ${messages.MUSIC_RESUMED}`)
+                .setColor(config.COLORS.SUCCESS);
+            await message.reply({ embeds: [embed] });
+        } else {
+            const embed = new EmbedBuilder()
+                .setDescription('Music is not paused!')
+                .setColor(config.COLORS.WARNING);
+            await message.reply({ embeds: [embed] });
+        }
+    } else {
+        // Use fallback method
+        const player = global.audioPlayers.get(message.guild.id);
+        if (player && player.state.status === AudioPlayerStatus.Paused) {
+            player.unpause();
+            const embed = new EmbedBuilder()
+                .setTitle(`${config.EMOJIS.PLAY} ${messages.MUSIC_RESUMED}`)
+                .setColor(config.COLORS.SUCCESS);
+            await message.reply({ embeds: [embed] });
+        } else {
+            const embed = new EmbedBuilder()
+                .setDescription('Music is not paused!')
+                .setColor(config.COLORS.WARNING);
+            await message.reply({ embeds: [embed] });
+        }
+    }
+}
+
+async function handleButtonInteraction(interaction, guildSettings) {
+    const lang = guildSettings.language || 'hi';
+    const messages = config.MESSAGES[lang];
+    const player = lavalinkManager.getPlayer(interaction.guild.id);
+    const queue = getQueue(interaction.guild.id);
+
+    if (!player) {
+        return await interaction.reply({ content: messages.NO_SONG_PLAYING, ephemeral: true });
+    }
+
+    switch (interaction.customId) {
+        case 'music_pause':
+            if (player.paused) {
+                await player.resume();
+                await interaction.reply({ content: messages.MUSIC_RESUMED, ephemeral: true });
+            } else {
+                await player.pause();
+                await interaction.reply({ content: messages.MUSIC_PAUSED, ephemeral: true });
+            }
+            break;
+
+        case 'music_skip':
+            if (player.queue.current) {
+                const currentTrack = player.queue.current;
+                await player.skip();
+                await interaction.reply({ content: `${config.EMOJIS.SKIP} Skipped: **${currentTrack.info.title}**`, ephemeral: true });
+            }
+            break;
+
+        case 'music_stop':
+            await player.destroy();
+            queue.clear();
+            global.queues.delete(interaction.guild.id);
+            await interaction.reply({ content: messages.MUSIC_STOPPED, ephemeral: true });
+            break;
+
+        case 'music_loop':
+            queue.loop = !queue.loop;
+            await interaction.reply({ content: queue.loop ? messages.LOOP_ON : messages.LOOP_OFF, ephemeral: true });
+            break;
+
+        case 'music_autoplay':
+            queue.autoplay = !queue.autoplay;
+            await interaction.reply({ content: queue.autoplay ? messages.AUTOPLAY_ON : messages.AUTOPLAY_OFF, ephemeral: true });
+            break;
+
+        case 'music_shuffle':
+            if (queue.isEmpty()) {
+                await interaction.reply({ content: messages.QUEUE_EMPTY, ephemeral: true });
+            } else {
+                queue.shuffle();
+                await interaction.reply({ content: messages.QUEUE_SHUFFLED, ephemeral: true });
+            }
+            break;
+
+        case 'music_queue':
+            await handleQueueInteraction(interaction, guildSettings);
+            break;
+
+        case 'music_previous':
+            const prevTrack = queue.previous();
+            if (prevTrack) {
+                await player.play({ track: prevTrack.encoded });
+                await interaction.reply({ content: `⏮️ Playing previous: **${prevTrack.info.title}**`, ephemeral: true });
+            } else {
+                await interaction.reply({ content: 'No previous song available!', ephemeral: true });
+            }
             break;
     }
 }
 
-// Export functions for use in commands
-global.getQueue = getQueue;
-global.createGuildAudioPlayer = createGuildAudioPlayer;
-global.playNext = playNext;
-global.getTrackFromUrl = getTrackFromUrl;
-global.createControlButtons = createControlButtons;
-global.createVolumeButtons = createVolumeButtons;
-global.getAutoplayTrack = getAutoplayTrack;
+async function handleQueueInteraction(interaction, guildSettings) {
+    const queue = getQueue(interaction.guild.id);
+    const embed = new EmbedBuilder()
+        .setTitle(`${config.EMOJIS.QUEUE} Music Queue`)
+        .setColor(config.COLORS.QUEUE);
 
-// Bot events
-client.once('ready', async () => {
-    console.log(`🎵 ${client.user.tag} music bot is online!`);
-    console.log(`📊 Serving ${client.guilds.cache.size} servers`);
-    
-    // Register slash commands
-    const commands = [];
-    for (const [name, command] of client.commands) {
-        commands.push(command.data.toJSON());
+    let description = '';
+
+    if (queue.nowPlaying) {
+        description += `**🎵 Now Playing:**\n${queue.nowPlaying.info.title}\n\n`;
     }
+
+    if (!queue.isEmpty()) {
+        description += '**📋 Up Next:**\n';
+        queue.songs.slice(0, 10).forEach((song, index) => {
+            description += `${index + 1}. ${song.info.title} - ${song.info.author}\n`;
+        });
+
+        if (queue.size() > 10) {
+            description += `\n...and ${queue.size() - 10} more songs`;
+        }
+        description += `\n**Total songs:** ${queue.size()}`;
+    } else {
+        description += '**Queue is empty**';
+    }
+
+    embed.setDescription(description);
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+}
+
+// Help command handler
+async function handleHelpCommand(message, guildSettings) {
+    const prefix = guildSettings.prefix;
+    
+    const embed = new EmbedBuilder()
+        .setTitle('🎵 RagaBot Commands Help')
+        .setColor(config.COLORS.INFO)
+        .setDescription(`**Current Prefix:** \`${prefix}\`\n**Quick Commands:** Use short forms like \`${prefix}p\` for play!`)
+        .addFields(
+            {
+                name: '🎵 Music Commands',
+                value: `\`${prefix}play\` \`${prefix}p\` - Play a song\n` +
+                      `\`${prefix}skip\` \`${prefix}s\` - Skip current song\n` +
+                      `\`${prefix}stop\` \`${prefix}st\` - Stop music\n` +
+                      `\`${prefix}pause\` - Pause music\n` +
+                      `\`${prefix}resume\` - Resume music\n` +
+                      `\`${prefix}volume\` \`${prefix}v\` - Set volume (0-100)`,
+                inline: true
+            },
+            {
+                name: '📋 Queue Commands',
+                value: `\`${prefix}queue\` \`${prefix}q\` - Show queue\n` +
+                      `\`${prefix}shuffle\` - Shuffle queue\n` +
+                      `\`${prefix}clear\` - Clear queue\n` +
+                      `\`${prefix}nowplaying\` \`${prefix}np\` - Current song`,
+                inline: true
+            },
+            {
+                name: '⚙️ Settings Commands',
+                value: `\`${prefix}loop\` \`${prefix}l\` - Toggle loop\n` +
+                      `\`${prefix}autoplay\` - Toggle autoplay\n` +
+                      `\`${prefix}setprefix\` - Change prefix\n` +
+                      `\`${prefix}help\` \`${prefix}h\` - Show this help`,
+                inline: true
+            }
+        )
+        .setFooter({ text: 'Use buttons on now playing message for quick controls!' });
+
+    await message.reply({ embeds: [embed] });
+}
+
+// Set prefix command handler
+async function handleSetPrefixCommand(message, args, guildSettings) {
+    const lang = guildSettings.language || 'hi';
+    const messages = config.MESSAGES[lang];
+
+    if (!args.length) {
+        const embed = new EmbedBuilder()
+            .setTitle(`${config.EMOJIS.INFO} Current Prefix`)
+            .setDescription(`Current server prefix is: \`${guildSettings.prefix}\`\nTo change it, use: \`${guildSettings.prefix}setprefix <new_prefix>\``)
+            .setColor(config.COLORS.INFO);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    const newPrefix = args[0];
+    if (newPrefix.length > 5) {
+        const embed = new EmbedBuilder()
+            .setDescription('Prefix cannot be longer than 5 characters!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    updateGuildPrefix(message.guild.id, newPrefix);
+
+    const embed = new EmbedBuilder()
+        .setTitle(`${config.EMOJIS.SUCCESS} ${messages.PREFIX_CHANGED}`)
+        .setDescription(`\`${newPrefix}\``)
+        .setColor(config.COLORS.SUCCESS);
+    await message.reply({ embeds: [embed] });
+}
+
+// Register slash commands
+async function registerSlashCommands() {
+    const commands = [
+        {
+            name: 'play',
+            description: 'Play a song from YouTube, Spotify, or SoundCloud',
+            options: [{
+                type: 3, // STRING
+                name: 'query',
+                description: 'Song name or URL',
+                required: true
+            }]
+        },
+        {
+            name: 'skip',
+            description: 'Skip the current song'
+        },
+        {
+            name: 'queue',
+            description: 'Show the current music queue'
+        },
+        {
+            name: 'volume',
+            description: 'Set the music volume (0-100)',
+            options: [{
+                type: 4, // INTEGER
+                name: 'level',
+                description: 'Volume level (0-100)',
+                required: true,
+                min_value: 0,
+                max_value: 100
+            }]
+        },
+        {
+            name: 'stop',
+            description: 'Stop music and clear queue'
+        }
+    ];
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
@@ -936,170 +1336,79 @@ client.once('ready', async () => {
         console.log('🔄 Refreshing application commands...');
         await rest.put(
             Routes.applicationCommands(client.user.id),
-            { body: commands },
+            { body: commands }
         );
         console.log('✅ Application commands registered successfully!');
     } catch (error) {
-        console.error('❌ Error registering commands:', error);
+        console.error('Failed to register commands:', error);
     }
-});
+}
 
-// Prefix command handling
-client.on('messageCreate', async message => {
-    if (message.author.bot || !message.guild) return;
-    
-    if (!message.content.startsWith(PREFIX)) return;
-    
-    const args = message.content.slice(PREFIX.length).trim().split(/ +/);
-    const commandName = args.shift().toLowerCase();
-    
-    // Check for command shortcuts
-    const actualCommand = COMMAND_SHORTCUTS[commandName] || commandName;
-    
-    try {
-        await handlePrefixCommand(message, actualCommand, args);
-    } catch (error) {
-        console.error('Prefix command error:', error);
-        message.reply(`❌ Error: ${error.message}`);
-    }
-});
+// Handle slash commands
+async function handleSlashCommand(interaction, guildSettings) {
+    await interaction.deferReply();
 
-client.on('interactionCreate', async interaction => {
-    // Handle slash commands
-    if (interaction.isChatInputCommand()) {
-        const command = client.commands.get(interaction.commandName);
-        if (!command) return;
-
-        try {
-            await command.execute(interaction);
-        } catch (error) {
-            console.error('Command execution error:', error);
-            const reply = { content: 'There was an error executing this command!', flags: 64 };
-            
-            if (interaction.replied || interaction.deferred) {
-                await interaction.followUp(reply);
-            } else {
-                await interaction.reply(reply);
-            }
-        }
-    }
-    
-    // Handle button interactions
-    if (interaction.isButton()) {
-        try {
-            await handleButtonInteraction(interaction);
-        } catch (error) {
-            console.error('Button interaction error:', error);
-            interaction.reply({ content: '❌ Error handling button interaction!', ephemeral: true });
-        }
-    }
-    
-    // Handle dropdown selections from search command
-    if (interaction.isStringSelectMenu() && interaction.customId === 'song_select') {
-        await interaction.deferReply();
+    switch (interaction.commandName) {
+        case 'play':
+            const query = interaction.options.getString('query');
+            await handlePlaySlashCommand(interaction, query, guildSettings);
+            break;
         
-        const member = interaction.member;
-        const voiceChannel = member?.voice?.channel;
-        const videoUrl = interaction.values[0];
-
-        if (!voiceChannel) {
-            return interaction.editReply('❌ आपको पहले किसी voice channel में join करना होगा!');
-        }
-
-        try {
-            // Get video info using play-dl (more reliable than ytdl)
-            let title, duration, thumbnail;
-            
-            try {
-                const videoInfo = await play.video_info(videoUrl);
-                title = videoInfo.video_details.title;
-                duration = videoInfo.video_details.durationInSec;
-                thumbnail = videoInfo.video_details.thumbnails[0]?.url;
-            } catch (playDlError) {
-                console.log('play-dl info failed, trying youtube-sr...');
-                // Fallback to YouTube search to get basic info
-                const videoId = videoUrl.split('v=')[1]?.split('&')[0];
-                if (videoId) {
-                    const searchResult = await YouTube.getVideo(videoUrl);
-                    title = searchResult.title;
-                    duration = searchResult.duration;
-                    thumbnail = searchResult.thumbnail?.url;
-                } else {
-                    throw new Error('Unable to extract video info');
-                }
-            }
-
-            const song = {
-                title,
-                url: videoUrl,
-                duration,
-                thumbnail,
-                requestedBy: interaction.user,
-            };
-
-            // Join voice channel if not already connected
-            let connection;
-            try {
-                connection = joinVoiceChannel({
-                    channelId: voiceChannel.id,
-                    guildId: interaction.guild.id,
-                    adapterCreator: interaction.guild.voiceAdapterCreator,
-                });
-            } catch (error) {
-                console.log('Already connected or connection exists');
-            }
-
-            const queue = getQueue(interaction.guild.id);
-            const player = createGuildAudioPlayer(interaction.guild.id);
-            
-            if (connection) {
-                connection.subscribe(player);
-            }
-
-            if (queue.nowPlaying) {
-                // Add to queue
-                queue.add(song);
-                return interaction.editReply(`📋 **${title}** को queue में add कर दिया! Position: ${queue.songs.length}`);
-            } else {
-                // Play immediately
-                queue.add(song);
-                playNext(interaction.guild.id);
-                return interaction.editReply(`🎵 अब play हो रहा है: **${title}**`);
-            }
-
-        } catch (error) {
-            console.error('Search selection error:', error);
-            return interaction.editReply('❌ गाना play करने में error हुई!');
-        }
-    }
-});
-
-// Voice connection cleanup
-client.on('voiceStateUpdate', (oldState, newState) => {
-    const botId = client.user.id;
-    
-    // Check if the bot was disconnected from voice
-    if (oldState.id === botId && oldState.channelId && !newState.channelId) {
-        const guildId = oldState.guild.id;
-        const queue = getQueue(guildId);
-        const player = audioPlayers.get(guildId);
+        case 'skip':
+            await handleSkipSlashCommand(interaction, guildSettings);
+            break;
         
-        if (player) {
-            player.stop();
-        }
-        queue.clear();
-        console.log(`[${guildId}] Bot disconnected, cleared queue`);
+        case 'queue':
+            await handleQueueSlashCommand(interaction, guildSettings);
+            break;
+        
+        case 'volume':
+            const volume = interaction.options.getInteger('level');
+            await handleVolumeSlashCommand(interaction, volume, guildSettings);
+            break;
+        
+        case 'stop':
+            await handleStopSlashCommand(interaction, guildSettings);
+            break;
     }
+}
+
+// Placeholder slash command handlers (implement similar to prefix commands)
+async function handlePlaySlashCommand(interaction, query, guildSettings) {
+    // Similar to handlePlayCommand but for slash commands
+    const lang = guildSettings.language || 'hi';
+    const messages = config.MESSAGES[lang];
+
+    if (!interaction.member.voice.channel) {
+        const embed = new EmbedBuilder()
+            .setDescription(messages.NO_VOICE_CHANNEL)
+            .setColor(config.COLORS.ERROR);
+        return await interaction.editReply({ embeds: [embed] });
+    }
+
+    // Implementation similar to handlePlayCommand...
+    await interaction.editReply('🎵 Playing your music! Use prefix commands for now - slash commands coming soon!');
+}
+
+// Enhanced Error handling
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
+    // Don't crash the bot, just log
 });
 
-// Error handling
-process.on('unhandledRejection', error => {
-    console.error('Unhandled promise rejection:', error);
+process.on('uncaughtException', (error) => {
+    console.error('🚨 Uncaught Exception:', error);
+    // Set lavalink unavailable if it's a lavalink error
+    if (error.message && error.message.includes('Lavalink')) {
+        lavalinkAvailable = false;
+        console.log('🎵 Switching to fallback mode due to Lavalink error');
+    }
+    // Don't exit the process for music bot errors
 });
 
 // Login
 if (!process.env.DISCORD_TOKEN) {
-    console.error('❌ DISCORD_TOKEN environment variable is required!');
+    console.error('❌ DISCORD_TOKEN is required! Please set it in your environment variables.');
     process.exit(1);
 }
 

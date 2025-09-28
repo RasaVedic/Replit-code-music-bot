@@ -29,3 +29,7 @@ args = "node index.js"
 
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[ports]]
+localPort = 8080
+externalPort = 80

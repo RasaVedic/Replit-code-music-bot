@@ -1,0 +1,35 @@
+FROM openjdk:17-jdk-alpine
+
+# Set working directory
+WORKDIR /opt/Lavalink
+
+# Create non-root user for security
+RUN addgroup -g 322 lavalink && \
+    adduser -u 322 -G lavalink -s /bin/sh -D lavalink
+
+# Install required packages
+RUN apk add --no-cache curl
+
+# Download Lavalink
+ARG LAVALINK_VERSION=4.0.8
+RUN curl -L -o Lavalink.jar \
+    "https://github.com/lavalink-devs/Lavalink/releases/download/${LAVALINK_VERSION}/Lavalink.jar"
+
+# Copy configuration
+COPY application.yml application.yml
+
+# Create logs directory
+RUN mkdir -p logs && chown -R lavalink:lavalink /opt/Lavalink
+
+# Switch to non-root user
+USER lavalink
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:${SERVER_PORT:-2333}/version || exit 1
+
+# Expose port
+EXPOSE 2333
+
+# Run Lavalink
+ENTRYPOINT ["java", "-Djdk.tls.client.protocols=TLSv1.2", "-Xmx1G", "-jar", "Lavalink.jar"]

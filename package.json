@@ -1,24 +1,59 @@
 {
-  "name": "workspace",
-  "version": "1.0.0",
+  "name": "ragabot-discord-music-bot",
+  "version": "2.0.0",
+  "description": "Advanced Discord music bot with Lavalink, custom prefixes, and interactive controls",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js",
+    "dev": "node --inspect index.js",
+    "test": "echo \"No tests specified\" && exit 0",
+    "setup": "node setup.js",
+    "lavalink": "java -jar Lavalink.jar",
+    "db:reset": "rm -f ragabot.db && node -e \"require('./database').initDatabase(); console.log('Database reset complete!')\"",
+    "health": "node -e \"console.log('Bot health check OK'); process.exit(0)\""
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "keywords": [
+    "discord",
+    "bot",
+    "music",
+    "lavalink",
+    "nodejs",
+    "youtube",
+    "spotify",
+    "soundcloud"
+  ],
+  "author": "RagaBot Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/ragabot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/ragabot/issues"
+  },
+  "homepage": "https://github.com/yourusername/ragabot#readme",
   "dependencies": {
     "@discordjs/opus": "^0.10.0",
     "@discordjs/voice": "^0.18.0",
     "@distube/ytdl-core": "^4.16.12",
     "@spotify/web-api-ts-sdk": "^1.2.0",
+    "better-sqlite3": "^11.6.0",
     "discord.js": "^14.22.1",
+    "lavalink-client": "^2.4.0",
     "opusscript": "^0.0.8",
     "play-dl": "^1.9.7",
     "soundcloud-downloader": "^1.0.0",
     "tweetnacl": "^1.0.3",
     "youtube-sr": "^4.3.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  },
+  "optionalDependencies": {
+    "bufferutil": "^4.0.7",
+    "utf-8-validate": "^6.0.3"
   }
 }

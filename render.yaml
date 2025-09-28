@@ -1,0 +1,51 @@
+services:
+  # Main Discord Bot Service
+  - type: web
+    name: ragabot-discord
+    env: node
+    region: oregon
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: NODE_ENV
+        value: production
+      - key: LAVALINK_HOST
+        value: localhost
+      - key: LAVALINK_PORT
+        value: 2333
+      - key: LAVALINK_PASSWORD
+        value: youshallnotpass
+    healthCheckPath: /health
+    
+  # Lavalink Audio Server
+  - type: web
+    name: ragabot-lavalink
+    env: docker
+    region: oregon
+    plan: starter
+    dockerfilePath: ./Dockerfile.lavalink
+    envVars:
+      - key: SERVER_PORT
+        value: 2333
+      - key: LAVALINK_PASSWORD
+        value: youshallnotpass
+    healthCheckPath: /version
+
+# Optional: Static assets or web dashboard
+  - type: static
+    name: ragabot-dashboard
+    staticPublishPath: ./public
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+# Database (if using external PostgreSQL instead of SQLite)
+databases:
+  - name: ragabot-db
+    databaseName: ragabot
+    user: ragabot_user
+    region: oregon
+    plan: starter

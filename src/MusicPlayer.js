@@ -79,65 +79,117 @@ async function playFallbackTrack(guildId, track) {
         let attempts = 0;
         const maxAttempts = 3;
         
-        // Enhanced headers with rotating user agents
+        // Enhanced anti-detection with more user agents and headers
         const userAgents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         ];
         
         const enhancedHeaders = {
             'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)],
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive'
+            'Referer': 'https://www.youtube.com/',
+            'Origin': 'https://www.youtube.com',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin'
         };
 
-        // Retry mechanism for YouTube streaming
+        // Try alternative approach: search instead of direct URL
+        if (!track.url || track.url.includes('youtube.com') || track.url.includes('youtu.be')) {
+            try {
+                // First try: Use title-based search with youtube-sr
+                const searchQuery = track.title || track.info?.title || 'music';
+                const { getCachedSearchResults } = require('../utils/CacheManager');
+                const searchResults = await getCachedSearchResults(searchQuery, 1);
+                
+                if (searchResults && searchResults.length > 0) {
+                    const video = searchResults[0];
+                    track.url = video.url;
+                    console.log(`[${guildId}] Found alternative URL: ${video.title}`);
+                }
+            } catch (error) {
+                console.log(`[${guildId}] Search fallback failed: ${error.message}`);
+            }
+        }
+
+        // Enhanced streaming with better error handling
         while (attempts < maxAttempts && !stream) {
             attempts++;
+            const delay = Math.random() * 1000 + 500; // Random delay 500-1500ms
             
-            if (track.url && (track.url.includes('youtube.com') || track.url.includes('youtu.be'))) {
+            if (track.url) {
+                // Method 1: Try play-dl with enhanced settings
                 try {
                     await play.setToken({
-                        useragent: [enhancedHeaders['User-Agent']]
+                        useragent: [enhancedHeaders['User-Agent']],
+                        cookie: process.env.YOUTUBE_COOKIES || undefined
                     });
                     
-                    stream = await play.stream(track.url, {
-                        quality: 2,
-                        discordPlayerCompatibility: true
-                    });
-                    console.log(`[${guildId}] Playing with play-dl (attempt ${attempts}): ${track.title}`);
-                    break;
+                    const info = await play.video_info(track.url, { quality: 'high' });
+                    if (info && info.video_details) {
+                        stream = await play.stream(track.url, {
+                            quality: 2,
+                            discordPlayerCompatibility: true,
+                            seek: 0,
+                            htmldata: false
+                        });
+                        console.log(`[${guildId}] ✅ Playing with play-dl (attempt ${attempts}): ${track.title}`);
+                        break;
+                    }
                 } catch (error) {
-                    console.log(`[${guildId}] play-dl failed (attempt ${attempts}: ${error.message})`);
-                    if (attempts < maxAttempts) {
-                        await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+                    console.log(`[${guildId}] ❌ play-dl failed (attempt ${attempts}): ${error.message}`);
+                }
+                
+                // Method 2: Try ytdl-core with enhanced settings
+                if (!stream) {
+                    try {
+                        const info = await ytdl.getBasicInfo(track.url, {
+                            requestOptions: { headers: enhancedHeaders }
+                        });
+                        
+                        if (info && info.videoDetails) {
+                            stream = ytdl(track.url, {
+                                filter: 'audioonly',
+                                quality: 'highestaudio',
+                                highWaterMark: 1 << 25,
+                                requestOptions: { headers: enhancedHeaders },
+                                begin: 0
+                            });
+                            console.log(`[${guildId}] ✅ Playing with ytdl-core (attempt ${attempts}): ${track.title}`);
+                            break;
+                        }
+                    } catch (error) {
+                        console.log(`[${guildId}] ❌ ytdl-core failed (attempt ${attempts}): ${error.message}`);
                     }
                 }
             }
             
-            // Fallback to ytdl-core
-            if (!stream && attempts === maxAttempts) {
-                try {
-                    stream = ytdl(track.url, {
-                        filter: 'audioonly',
-                        quality: 'highestaudio',
-                        highWaterMark: 1 << 25,
-                        requestOptions: { headers: enhancedHeaders }
-                    });
-                    console.log(`[${guildId}] Playing with ytdl-core (attempt ${attempts}): ${track.title}`);
-                    break;
-                } catch (error) {
-                    console.log(`[${guildId}] ytdl-core failed (attempt ${attempts}): ${error.message}`);
-                }
+            // Wait before next attempt
+            if (attempts < maxAttempts) {
+                await new Promise(resolve => setTimeout(resolve, delay));
             }
         }
 
         if (!stream) {
-            console.error(`[${guildId}] All streaming methods failed for: ${track.title}`);
+            console.error(`[${guildId}] ❌ All streaming methods failed for: ${track.title}`);
+            // Clean up any garbage files
+            try {
+                const fs = require('fs');
+                const files = fs.readdirSync('.').filter(f => 
+                    (f.includes('watch') && f.endsWith('.html')) || 
+                    (f.includes('player-script') && f.endsWith('.js'))
+                );
+                files.forEach(file => {
+                    try { fs.unlinkSync(file); } catch (e) {}
+                });
+                if (files.length > 0) {
+                    console.log(`[${guildId}] 🧹 Cleaned ${files.length} garbage files`);
+                }
+            } catch (e) {}
             return false;
         }
 

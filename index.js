@@ -4,13 +4,13 @@ const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerSta
 const ytdl = require('@distube/ytdl-core');
 const YouTube = require('youtube-sr').default;
 const play = require('play-dl');
-const { initDatabase, getGuildSettings, updateGuildPrefix, logCommand } = require('./database');
+const { initDatabase, getGuildSettings, updateGuildPrefix, logCommand } = require('./src/database');
 const config = require('./config/botConfig');
 const fs = require('fs');
 const path = require('path');
 
 // Start health check server for deployment
-require('./health');
+require('./utils/health');
 
 // Initialize bot client
 const client = new Client({

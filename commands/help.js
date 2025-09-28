@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const config = require('../config/botConfig');
-const { getGuildSettings } = require('../database');
+const { getGuildSettings } = require('../src/database');
 
 module.exports = {
     data: new SlashCommandBuilder()

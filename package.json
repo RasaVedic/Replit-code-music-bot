@@ -9,7 +9,7 @@
     "test": "echo \"No tests specified\" && exit 0",
     "setup": "node setup.js",
     "lavalink": "java -jar Lavalink.jar",
-    "db:reset": "rm -f ragabot.db && node -e \"require('./database').initDatabase(); console.log('Database reset complete!')\"",
+    "db:reset": "rm -f ragabot.db && node -e \"require('./src/database').initDatabase(); console.log('Database reset complete!')\"",
     "health": "node -e \"console.log('Bot health check OK'); process.exit(0)\""
   },
   "keywords": [

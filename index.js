@@ -3,7 +3,7 @@ const { initDatabase, getGuildSettings, logCommand } = require('./src/database')
 const { getQueue } = require('./utils/QueueManager');
 const { getCachedGuildSettings, setupCacheCleanup } = require('./utils/CacheManager');
 const { initializeLavalink } = require('./src/MusicPlayer');
-const { handlePlayCommand, handleSkipCommand, handleStopCommand, handleQueueCommand, handleStatusCommand, handleHelpCommand, handlePauseCommand, handleResumeCommand, handleVolumeCommand, handleJoinCommand, handleLeaveCommand } = require('./src/CommandHandlers');
+const { handlePlayCommand, handleSkipCommand, handleStopCommand, handleQueueCommand, handleStatusCommand, handleHelpCommand, handlePauseCommand, handleResumeCommand, handleVolumeCommand, handleJoinCommand, handleLeaveCommand, handleLoopCommand, handleShuffleCommand, handleClearCommand, handleRemoveCommand, handleMoveCommand } = require('./src/CommandHandlers');
 const { handleButtonInteraction } = require('./src/ButtonHandlers');
 const config = require('./config/botConfig');
 const fs = require('fs');
@@ -260,6 +260,31 @@ async function handleCommand(command, message, args, guildSettings) {
         case 'leave':
         case 'lv':
             await handleLeaveCommand(message, guildSettings);
+            break;
+            
+        case 'loop':
+        case 'l':
+            await handleLoopCommand(message, args, guildSettings);
+            break;
+            
+        case 'shuffle':
+        case 'sh':
+            await handleShuffleCommand(message, guildSettings);
+            break;
+            
+        case 'clear':
+        case 'cl':
+            await handleClearCommand(message, guildSettings);
+            break;
+            
+        case 'remove':
+        case 'rm':
+            await handleRemoveCommand(message, args, guildSettings);
+            break;
+            
+        case 'move':
+        case 'mv':
+            await handleMoveCommand(message, args, guildSettings);
             break;
         
         default:

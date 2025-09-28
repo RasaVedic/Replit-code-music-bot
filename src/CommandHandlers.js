@@ -791,6 +791,237 @@ async function handleLeaveCommand(message, guildSettings) {
     }
 }
 
+// Loop command handler
+async function handleLoopCommand(message, args, guildSettings) {
+    const queue = getQueue(message.guild.id);
+    
+    // Voice channel validation
+    const channelCheck = checkSameVoiceChannel(message);
+    if (!channelCheck.valid) {
+        const embed = new EmbedBuilder()
+            .setDescription(channelCheck.error)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    if (!queue.nowPlaying && queue.isEmpty()) {
+        const embed = new EmbedBuilder()
+            .setDescription('❌ कोई गाना play नहीं हो रहा है!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    // Toggle loop if no argument provided
+    if (!args.length) {
+        queue.loop = !queue.loop;
+    } else {
+        const mode = args[0].toLowerCase();
+        if (mode === 'on' || mode === 'song' || mode === 'true') {
+            queue.loop = true;
+        } else if (mode === 'off' || mode === 'false') {
+            queue.loop = false;
+        } else {
+            queue.loop = !queue.loop;
+        }
+    }
+
+    const embed = new EmbedBuilder()
+        .setTitle(`${config.EMOJIS.LOOP} Loop Mode ${queue.loop ? 'Enabled' : 'Disabled'}`)
+        .setDescription(queue.loop ? 
+            '🔂 Current song को loop mode पर set कर दिया!' : 
+            '➡️ Loop mode off कर दिया!')
+        .setColor(queue.loop ? config.COLORS.SUCCESS : config.COLORS.WARNING);
+    
+    await message.reply({ embeds: [embed] });
+}
+
+// Shuffle command handler
+async function handleShuffleCommand(message, guildSettings) {
+    const queue = getQueue(message.guild.id);
+    
+    // Voice channel validation
+    const channelCheck = checkSameVoiceChannel(message);
+    if (!channelCheck.valid) {
+        const embed = new EmbedBuilder()
+            .setDescription(channelCheck.error)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    if (queue.isEmpty()) {
+        const embed = new EmbedBuilder()
+            .setDescription('❌ Queue में कोई गाना नहीं है!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    if (queue.size() < 2) {
+        const embed = new EmbedBuilder()
+            .setDescription('❌ Shuffle करने के लिए कम से कम 2 गाने होने चाहिए!')
+            .setColor(config.COLORS.WARNING);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    try {
+        queue.shuffle();
+        const embed = new EmbedBuilder()
+            .setTitle(`${config.EMOJIS.SHUFFLE} Queue Shuffled`)
+            .setDescription(`🔀 ${queue.size()} गाने shuffle कर दिए गए!`)
+            .setColor(config.COLORS.SUCCESS);
+        await message.reply({ embeds: [embed] });
+    } catch (error) {
+        console.error('Shuffle command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription('❌ Shuffle करने में error हुई!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Clear command handler
+async function handleClearCommand(message, guildSettings) {
+    const queue = getQueue(message.guild.id);
+    
+    // Voice channel validation
+    const channelCheck = checkSameVoiceChannel(message);
+    if (!channelCheck.valid) {
+        const embed = new EmbedBuilder()
+            .setDescription(channelCheck.error)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    if (queue.isEmpty()) {
+        const embed = new EmbedBuilder()
+            .setDescription('❌ Queue पहले से ही empty है!')
+            .setColor(config.COLORS.WARNING);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    try {
+        const queueSize = queue.size();
+        queue.clear();
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`${config.EMOJIS.SUCCESS} Queue Cleared`)
+            .setDescription(`🗑️ ${queueSize} गाने queue से clear कर दिए गए!`)
+            .setColor(config.COLORS.SUCCESS)
+            .setFooter({ text: 'Current playing song continues' });
+        await message.reply({ embeds: [embed] });
+    } catch (error) {
+        console.error('Clear command error:', error);
+        const embed = new EmbedBuilder()
+            .setDescription('❌ Queue clear करने में error हुई!')
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Remove command handler
+async function handleRemoveCommand(message, args, guildSettings) {
+    const queue = getQueue(message.guild.id);
+    
+    // Voice channel validation
+    const channelCheck = checkSameVoiceChannel(message);
+    if (!channelCheck.valid) {
+        const embed = new EmbedBuilder()
+            .setDescription(channelCheck.error)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    if (queue.isEmpty()) {
+        const embed = new EmbedBuilder()
+            .setDescription('❌ Queue में कोई गाना नहीं है!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    if (!args.length) {
+        const embed = new EmbedBuilder()
+            .setDescription(`❌ Position specify करें!\nUsage: \`${guildSettings.prefix}remove <position>\`\nExample: \`${guildSettings.prefix}remove 3\``)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    const position = parseInt(args[0]);
+    if (isNaN(position) || position < 1) {
+        const embed = new EmbedBuilder()
+            .setDescription('❌ Valid position number डालें! (1, 2, 3...)')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    try {
+        const removedSong = queue.remove(position);
+        const embed = new EmbedBuilder()
+            .setTitle(`${config.EMOJIS.SUCCESS} Song Removed`)
+            .setDescription(`🗑️ **${removedSong.title}** को queue से remove कर दिया!`)
+            .setColor(config.COLORS.SUCCESS)
+            .setFooter({ text: `Position: ${position}` });
+        await message.reply({ embeds: [embed] });
+    } catch (error) {
+        console.error('Remove command error:', error.message);
+        const embed = new EmbedBuilder()
+            .setDescription(`❌ ${error.message}`)
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
+// Move command handler
+async function handleMoveCommand(message, args, guildSettings) {
+    const queue = getQueue(message.guild.id);
+    
+    // Voice channel validation
+    const channelCheck = checkSameVoiceChannel(message);
+    if (!channelCheck.valid) {
+        const embed = new EmbedBuilder()
+            .setDescription(channelCheck.error)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+    
+    if (queue.isEmpty()) {
+        const embed = new EmbedBuilder()
+            .setDescription('❌ Queue में कोई गाना नहीं है!')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    if (args.length < 2) {
+        const embed = new EmbedBuilder()
+            .setDescription(`❌ From और to position specify करें!\nUsage: \`${guildSettings.prefix}move <from> <to>\`\nExample: \`${guildSettings.prefix}move 3 1\``)
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    const fromPosition = parseInt(args[0]);
+    const toPosition = parseInt(args[1]);
+    
+    if (isNaN(fromPosition) || isNaN(toPosition) || fromPosition < 1 || toPosition < 1) {
+        const embed = new EmbedBuilder()
+            .setDescription('❌ Valid position numbers डालें! (1, 2, 3...)')
+            .setColor(config.COLORS.ERROR);
+        return await message.reply({ embeds: [embed] });
+    }
+
+    try {
+        const movedSong = queue.move(fromPosition, toPosition);
+        const embed = new EmbedBuilder()
+            .setTitle(`${config.EMOJIS.SUCCESS} Song Moved`)
+            .setDescription(`🔄 **${movedSong.title}** को position ${fromPosition} से ${toPosition} पर move कर दिया!`)
+            .setColor(config.COLORS.SUCCESS);
+        await message.reply({ embeds: [embed] });
+    } catch (error) {
+        console.error('Move command error:', error.message);
+        const embed = new EmbedBuilder()
+            .setDescription(`❌ ${error.message}`)
+            .setColor(config.COLORS.ERROR);
+        await message.reply({ embeds: [embed] });
+    }
+}
+
 module.exports = {
     handlePlayCommand,
     handleSkipCommand,
@@ -803,5 +1034,10 @@ module.exports = {
     handleVolumeCommand,
     handleJoinCommand,
     handleLeaveCommand,
+    handleLoopCommand,
+    handleShuffleCommand,
+    handleClearCommand,
+    handleRemoveCommand,
+    handleMoveCommand,
     handleFallbackSearch
 };

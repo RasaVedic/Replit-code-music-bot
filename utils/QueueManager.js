@@ -98,6 +98,29 @@ class EnhancedMusicQueue {
     getRequiredSkipVotes(voiceChannelSize) {
         return Math.ceil(voiceChannelSize / 2);
     }
+    
+    // Remove a song from queue by position (1-indexed)
+    remove(position) {
+        if (position < 1 || position > this.songs.length) {
+            throw new Error(`Invalid position! Position should be between 1 and ${this.songs.length}`);
+        }
+        const removed = this.songs.splice(position - 1, 1);
+        return removed[0];
+    }
+    
+    // Move a song from one position to another (1-indexed)
+    move(fromPosition, toPosition) {
+        if (fromPosition < 1 || fromPosition > this.songs.length) {
+            throw new Error(`Invalid source position! Position should be between 1 and ${this.songs.length}`);
+        }
+        if (toPosition < 1 || toPosition > this.songs.length) {
+            throw new Error(`Invalid target position! Position should be between 1 and ${this.songs.length}`);
+        }
+        
+        const song = this.songs.splice(fromPosition - 1, 1)[0];
+        this.songs.splice(toPosition - 1, 0, song);
+        return song;
+    }
 }
 
 // Queue management with performance enhancements

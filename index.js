@@ -22,6 +22,9 @@ const client = new Client({
     ],
 });
 
+// Perform startup cleanup first
+performStartupCleanup();
+
 // Initialize database with error handling
 try {
     initDatabase();
@@ -34,20 +37,20 @@ try {
 let lavalinkManager = null;
 let lavalinkAvailable = false;
 
-// Lavalink configuration
+// Lavalink configuration with environment variables
 const lavalinkConfig = {
     nodes: [
         {
-            authorization: "youshallnotpass",
-            host: "localhost",
-            port: 8080,
+            authorization: process.env.LAVALINK_PASSWORD || "youshallnotpass",
+            host: process.env.LAVALINK_HOST || "localhost",
+            port: parseInt(process.env.LAVALINK_PORT) || 2333,
             id: "main_node"
         }
     ],
     sendToShard: (guildId, payload) => client.guilds.cache.get(guildId)?.shard?.send(payload),
     client: {
         id: process.env.CLIENT_ID || client.user?.id,
-        username: "EchoTune"
+        username: process.env.BOT_NAME || "EchoTune"
     }
 };
 
@@ -641,44 +644,30 @@ async function playFallbackTrack(guildId, track) {
                     stream = ytdl(track.url, {
                         filter: 'audioonly',
                         quality: 'highestaudio',
-                        highWaterMark: 1 << 25,
-                        dlChunkSize: 0, // Disable chunking for better compatibility
                         requestOptions: {
-                            headers: enhancedHeaders,
-                            maxRedirects: 3,
-                            timeout: 15000, // 15 second timeout
-                            transform: (parsed) => {
-                                // Add random delay and IP to avoid rate limiting
-                                return Object.assign(parsed, {
-                                    headers: Object.assign(parsed.headers, {
-                                        'X-Forwarded-For': generateRandomIP(),
-                                        'X-Real-IP': generateRandomIP()
-                                    })
-                                });
-                            }
+                            headers: {
+                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                            },
+                            timeout: 8000
                         },
-                        // Enhanced options to avoid detection
-                        lang: 'en',
-                        format: 'audioonly',
-                        begin: '0s', // Start from beginning
-                        liveBuffer: 20000, // Buffer for live streams
-                        // Use IPv6 when possible
-                        IPv6Block: process.env.YTDL_IPV6_BLOCK || undefined,
-                        // Disable some features that might trigger detection
-                        playerParams: {
-                            html5: 1,
-                            c: 'WEB',
-                            cver: '2.20240101.01.00'
-                        }
+                        // Simplified options to reduce parsing errors
+                        lang: 'en'
                     });
                     console.log(`[${guildId}] Playing with ytdl-core (attempt ${attempts}): ${track.title}`);
                     break;
                 } catch (error) {
                     console.log(`[${guildId}] ytdl-core failed (attempt ${attempts}: ${error.message})`);
                     
-                    // If it's a parsing error, try to handle it gracefully
+                    // If it's a parsing error, handle gracefully and prevent file creation
                     if (error.message.includes('watch.html') || error.message.includes('parsing')) {
-                        console.log(`[${guildId}] YouTube parsing error detected, skipping to search-based fallback`);
+                        console.log(`[${guildId}] YouTube parsing error detected, switching to play-dl only`);
+                        // Clean up any watch.html files that might have been created
+                        try {
+                            require('fs').readdirSync('.').filter(f => f.includes('watch.html')).forEach(f => {
+                                require('fs').unlinkSync(f);
+                                console.log(`🧹 Cleaned up: ${f}`);
+                            });
+                        } catch (e) { /* ignore cleanup errors */ }
                         break; // Skip remaining attempts and go to search-based fallback
                     }
                     
@@ -3214,6 +3203,32 @@ async function handleSeekCommand(message, args, guildSettings) {
         .setDescription('Seek feature is coming soon!\nCurrently working with fallback player limitations.')
         .setColor(config.COLORS.INFO);
     await message.reply({ embeds: [embed] });
+}
+
+// Startup cleanup function
+function performStartupCleanup() {
+    try {
+        const fs = require('fs');
+        const path = require('path');
+        
+        // Clean up any existing HTML garbage files
+        const files = fs.readdirSync('.');
+        const htmlFiles = files.filter(f => f.includes('watch') && f.endsWith('.html'));
+        
+        if (htmlFiles.length > 0) {
+            htmlFiles.forEach(file => {
+                try {
+                    fs.unlinkSync(file);
+                    console.log(`🧹 Startup cleanup: removed ${file}`);
+                } catch (err) {
+                    console.log(`Warning: Could not delete ${file}`);
+                }
+            });
+            console.log(`🧹 Startup cleanup completed: removed ${htmlFiles.length} garbage files`);
+        }
+    } catch (error) {
+        console.log('Startup cleanup warning:', error.message);
+    }
 }
 
 // Enhanced Error handling

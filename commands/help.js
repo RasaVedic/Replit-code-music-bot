@@ -39,9 +39,20 @@ module.exports = {
                     name: `${config.EMOJIS.QUEUE} Queue Management`,
                     value: `\`${prefix}queue\` \`${prefix}q\` - Show current queue\n` +
                           `\`${prefix}nowplaying\` \`${prefix}np\` - Current song info\n` +
-                          `\`${prefix}history\` - Show play history\n` +
-                          `\`${prefix}remove\` - Remove song from queue\n` +
-                          `\`${prefix}move\` - Move song position`,
+                          `\`${prefix}history\` \`${prefix}h\` - Show play history\n` +
+                          `\`${prefix}remove\` \`${prefix}rm\` - Remove song from queue\n` +
+                          `\`${prefix}move\` \`${prefix}mv\` - Move song position\n` +
+                          `\`${prefix}skipto\` - Jump to queue position`,
+                    inline: true
+                },
+                {
+                    name: `🎛️ Advanced Features`,
+                    value: `\`${prefix}playlist\` \`${prefix}pl\` - Load playlists\n` +
+                          `\`${prefix}voteskip\` \`${prefix}vs\` - Democratic skip\n` +
+                          `\`${prefix}bassboost\` \`${prefix}bass\` - Audio enhancement\n` +
+                          `\`${prefix}filters\` \`${prefix}fx\` - Audio filters\n` +
+                          `\`${prefix}speed\` - Playback speed control\n` +
+                          `\`${prefix}leave\` \`${prefix}lv\` - Disconnect bot`,
                     inline: true
                 },
                 {

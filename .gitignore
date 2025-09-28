@@ -41,3 +41,8 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+
+# YouTube parsing error files (garbage HTML files)
+*.html
+*watch.html
+*-watch.html

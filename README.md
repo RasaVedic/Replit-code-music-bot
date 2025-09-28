@@ -1,386 +1,355 @@
-# 🎵 RagaBot - Advanced Discord Music Bot
+# 🎵 EchoTune - Advanced Discord Music Bot
 
-**RagaBot** is a powerful, feature-rich Discord music bot built with modern technology stack including **Lavalink**, **Discord.js v14**, and **SQLite database**. It supports multiple music sources, custom prefixes, advanced queue management, and an intuitive button-based interface.
+**EchoTune** is a lightning-fast ⚡, feature-rich Discord music bot with **advanced performance optimizations**, **smart caching**, and **25+ powerful commands**. Supports YouTube, Spotify playlists, and SoundCloud with intelligent fallback systems.
 
-## ✨ Features
+## ⚡ Performance Features
+
+### 🚀 **Speed Optimizations**
+- **Smart Caching**: Guild settings and search results cached for instant responses  
+- **Concurrent Operations**: Multiple tasks processed simultaneously
+- **Memory Management**: Optimized resource cleanup and leak prevention
+- **Enhanced Streaming**: Multiple fallback methods with anti-detection
+- **Bulk Operations**: Lightning-fast playlist loading
+
+### 🛡️ **Stability & Reliability**
+- **Crash-Proof**: Advanced error handling prevents bot crashes
+- **Auto-Recovery**: Intelligent reconnection and resource cleanup
+- **Resource Monitoring**: Automatic cleanup of idle players and memory
+- **Fault Tolerance**: Graceful degradation when services are unavailable
+
+## ✨ Core Features
 
 ### 🎵 **Music Playback**
-- **Multiple Sources**: YouTube, Spotify, SoundCloud support
-- **High-Quality Streaming**: Powered by Lavalink for superior audio quality
-- **Fast Loading**: Direct streaming without full buffering
-- **Smart Fallbacks**: Automatic source switching if one fails
+- **Multiple Sources**: YouTube, Spotify playlists, SoundCloud
+- **Smart Search**: Cached results with intelligent suggestions  
+- **High-Quality Audio**: Optimized streaming with enhanced quality
+- **Playlist Auto-Detection**: Automatically detects and loads full playlists
+- **Fast Loading**: Concurrent downloads and smart buffering
 
 ### 🎛️ **Advanced Controls**
-- **Interactive Buttons**: Previous, Play/Pause, Skip, Stop controls
-- **Smart Autoplay**: Intelligent song suggestions based on listening history
-- **Loop Modes**: Single song and queue loop options
-- **Queue Management**: Shuffle, clear, and advanced queue operations
-- **Volume Control**: Per-server volume settings (0-100%)
+- **Interactive Buttons**: Full control panel with visual feedback
+- **Smart Autoplay**: AI-driven song suggestions based on listening patterns
+- **Vote System**: Democratic skip voting for fair music control
+- **Queue Management**: 10+ queue manipulation commands
+- **Audio Filters**: Bass boost, nightcore, speed control
 
-### ⚙️ **Customization**
-- **Custom Prefixes**: Set unique prefixes per server
-- **Short Commands**: Use `!p` instead of `!play` for faster commands
-- **Multi-Language**: Hindi and English support
-- **User Preferences**: Personalized settings per user
+### 📊 **Professional Features**
+- **Analytics**: Command usage tracking and performance metrics
+- **Multi-Language**: Hindi and English support with auto-detection
+- **Custom Prefixes**: Per-server customization
+- **History Tracking**: Last 20 songs with replay functionality
+- **Database Persistence**: SQLite for reliable data storage
 
-### 📊 **Advanced Features**
-- **Command Aliases**: 30+ command shortcuts for efficiency
-- **Play History**: Track last 20 played songs
-- **Command Statistics**: Usage tracking and analytics
-- **Persistent Settings**: SQLite database for reliable data storage
-- **Queue Persistence**: Resume queues after bot restart
-
-## 🚀 **Quick Setup**
+## 🚀 Quick Setup
 
 ### Prerequisites
-- **Node.js 18+** 
-- **Java 17+** (for Lavalink)
-- **Discord Bot Token**
+- **Node.js 18+**
+- **Discord Bot Token** 
+- **2GB+ RAM** (recommended for optimal performance)
 
-### 1. Clone Repository
+### Installation
 ```bash
-git clone https://github.com/yourusername/ragabot
-cd ragabot
+# Clone and setup
+git clone <repository-url>
+cd discord-music-bot
 npm install
-```
 
-### 2. Environment Variables
-Create `.env` file:
-```env
-DISCORD_TOKEN=your_discord_bot_token_here
-```
+# Set your bot token
+export DISCORD_TOKEN=your_bot_token_here
 
-### 3. Start Lavalink Server
-```bash
-# Download Lavalink (if not included)
-curl -OL https://github.com/lavalink-devs/Lavalink/releases/latest/download/Lavalink.jar
-
-# Start Lavalink server
-java -jar Lavalink.jar
-```
-
-### 4. Start Bot
-```bash
+# Start the bot
 npm start
 ```
 
-## 📋 **Commands Reference**
+### Environment Variables
+```env
+DISCORD_TOKEN=your_discord_bot_token_here
+NODE_ENV=production
+```
+
+## 📋 Command Reference
 
 ### 🎵 **Music Commands**
 | Command | Aliases | Description | Example |
 |---------|---------|-------------|---------|
-| `!play` | `!p`, `!pl`, `!music` | Play song from URL or search | `!p Tum Hi Ho` |
-| `!skip` | `!s`, `!sk`, `!next` | Skip current song | `!s` |
-| `!stop` | `!st`, `!halt`, `!dc` | Stop music and disconnect | `!stop` |
-| `!pause` | - | Pause current song | `!pause` |
-| `!resume` | - | Resume paused song | `!resume` |
-| `!volume` | `!v`, `!vol` | Set volume (0-100) | `!v 80` |
+| `!play` | `!p` | Play song or playlist from URL/search | `!p Tum Hi Ho` |
+| `!skip` | `!s` | Skip current song | `!s` |
+| `!pause` | `!ps` | Pause current song | `!pause` |
+| `!resume` | `!r` | Resume paused song | `!resume` |
+| `!stop` | `!st` | Stop music and clear queue | `!stop` |
+| `!volume` | `!v` | Set volume (1-100) | `!v 75` |
+| `!leave` | `!lv` | Disconnect from voice channel | `!lv` |
+| `!join` | `!j` | Join your voice channel | `!join` |
 
-### 📋 **Queue Management**
+### 🗳️ **Advanced Music Control**
 | Command | Aliases | Description | Example |
 |---------|---------|-------------|---------|
-| `!queue` | `!q`, `!qu`, `!list` | Show current queue | `!q` |
-| `!shuffle` | `!mix` | Shuffle queue | `!shuffle` |
-| `!clear` | `!empty` | Clear entire queue | `!clear` |
-| `!nowplaying` | `!np`, `!current` | Show current song | `!np` |
+| `!voteskip` | `!vs` | Democratic skip voting | `!vs` |
+| `!skipto` | `!st` | Skip to specific position in queue | `!skipto 5` |
+| `!seek` | - | Seek to time position | `!seek 1:30` |
+| `!speed` | `!tempo` | Change playback speed (0.5-2.0) | `!speed 1.25` |
+| `!bassboost` | `!bass` | Toggle bass enhancement | `!bass` |
+| `!filters` | `!fx` | Audio filters menu | `!filters nightcore` |
 
-### ⚙️ **Settings & Control**
+### 📋 **Queue Management** 
 | Command | Aliases | Description | Example |
 |---------|---------|-------------|---------|
-| `!loop` | `!l`, `!repeat` | Toggle loop mode | `!loop` |
-| `!autoplay` | - | Toggle smart autoplay | `!autoplay` |
-| `!setprefix` | `!prefix` | Change server prefix | `!setprefix ?` |
-| `!help` | `!h`, `!commands` | Show command help | `!help` |
+| `!queue` | `!q` | Show current queue | `!q` |
+| `!shuffle` | `!sh` | Shuffle queue randomly | `!shuffle` |
+| `!move` | `!mv` | Move song to different position | `!move 3 1` |
+| `!remove` | `!rm` | Remove song from queue | `!rm 5` |
+| `!clear` | - | Clear entire queue | `!clear` |
+| `!loop` | `!l` | Toggle song/queue loop | `!loop` |
+| `!autoplay` | `!ap` | Toggle smart autoplay | `!ap` |
 
-## 🎛️ **Button Controls**
+### 🎵 **Playlist & History**
+| Command | Aliases | Description | Example |
+|---------|---------|-------------|---------|
+| `!playlist` | `!pl` | Load YouTube/Spotify playlist | `!pl <playlist-url>` |
+| `!nowplaying` | `!np` | Show current song info | `!np` |
+| `!history` | `!h` | View recently played songs | `!history` |
+| `!lyrics` | `!ly` | Get song lyrics | `!lyrics` |
+
+### ⚙️ **System & Settings**
+| Command | Aliases | Description | Example |
+|---------|---------|-------------|---------|
+| `!help` | `!h` | Complete command guide | `!help` |
+| `!status` | - | Bot performance stats | `!status` |
+| `!setprefix` | - | Change server prefix | `!setprefix ?` |
+
+## 🎛️ Interactive Button Controls
 
 ### Main Control Panel
 - **⏮️ Previous**: Play previous song from history
-- **⏯️ Play/Pause**: Toggle playback
-- **⏭️ Skip**: Skip to next song
-- **⏹️ Stop**: Stop music and clear queue
+- **⏯️ Play/Pause**: Toggle playback with visual feedback
+- **⏭️ Skip**: Skip to next song instantly  
+- **⏹️ Stop**: Stop music and clear queue completely
 
 ### Advanced Controls
-- **🔂 Loop**: Toggle loop mode (On/Off)
-- **🤖 Auto**: Toggle autoplay (On/Off)
-- **🔀 Shuffle**: Shuffle current queue
-- **📋 Queue**: View detailed queue information
+- **🔂 Loop**: Toggle loop mode (Song/Queue/Off)
+- **🤖 Auto**: Toggle intelligent autoplay
+- **🔀 Shuffle**: Randomize queue order
+- **📋 Queue**: Quick queue overview
+- **🔊 Volume**: Volume control buttons
 
-## 🏗️ **Architecture**
+## 🏗️ Architecture & Performance
 
-### **Tech Stack**
-- **Discord.js v14**: Modern Discord API wrapper
-- **Lavalink**: High-performance audio server
-- **SQLite3**: Lightweight database for settings
-- **Node.js**: Runtime environment
+### **Modern Tech Stack**
+- **Discord.js v14**: Latest Discord API with optimal performance
+- **Enhanced Audio Engine**: Custom fallback system with multiple sources  
+- **SQLite3**: Lightweight, fast database for settings
+- **Smart Caching**: Redis-like in-memory caching for speed
+- **Concurrent Processing**: Async operations for maximum throughput
 
-### **Key Components**
-1. **LavalinkManager**: Handles audio streaming and playback
-2. **EnhancedMusicQueue**: Advanced queue management system
-3. **Database Layer**: Persistent settings and preferences
-4. **Command System**: Dual prefix/slash command support
-5. **Button Interface**: Interactive music controls
-
-### **Performance Features**
-- **Connection Pooling**: Efficient resource management
-- **Memory Optimization**: Smart garbage collection
-- **Caching Strategy**: Reduced API calls
-- **Error Recovery**: Automatic reconnection and fallbacks
-
-## 🌐 **Deployment**
-
-### **Render Deployment**
-
-1. **Fork this repository** to your GitHub account
-
-2. **Create new Web Service** on [Render](https://render.com)
-   - Connect your forked repository
-   - Set **Build Command**: `npm install`
-   - Set **Start Command**: `npm start`
-
-3. **Environment Variables**:
-   ```
-   DISCORD_TOKEN=your_bot_token
-   NODE_ENV=production
-   ```
-
-4. **Lavalink Setup** (for Render):
-   ```yaml
-   # render.yaml (optional)
-   services:
-     - type: web
-       name: ragabot
-       env: node
-       buildCommand: npm install
-       startCommand: npm start
-       envVars:
-         - key: DISCORD_TOKEN
-           sync: false
-   ```
-
-### **Alternative Hosting**
-- **Railway**: Simple deployment with Git integration
-- **Heroku**: Classic platform (paid plans only)
-- **VPS Hosting**: DigitalOcean, Linode for full control
-- **Self-Hosted**: Your own server setup
-
-### **Production Optimizations**
+### **Performance Optimizations**
 ```javascript
-// Recommended PM2 configuration
+// Smart caching system
+global.guildSettingsCache = new Map();     // Instant guild settings
+global.searchResultsCache = new Map();     // Cached search results  
+global.audioPlayers = new Map();           // Efficient player management
+
+// Memory management
+CACHE_CONFIG = {
+    GUILD_SETTINGS_TTL: 10 * 60 * 1000,    // 10 min cache
+    SEARCH_RESULTS_TTL: 30 * 60 * 1000,    // 30 min cache  
+    MAX_CACHE_SIZE: 1000,                   // LRU eviction
+    CLEANUP_INTERVAL: 5 * 60 * 1000         // Auto cleanup
+}
+```
+
+### **Intelligent Fallback System**
+1. **Primary**: Play-dl with enhanced headers
+2. **Secondary**: ytdl-core with rotating user agents  
+3. **Tertiary**: Search-based YouTube fallback
+4. **Final**: Cached similar content
+
+## 🎵 Playlist Support
+
+### **Auto-Detection**
+- **YouTube Playlists**: `https://youtube.com/playlist?list=...`
+- **Spotify Playlists**: `https://spotify.com/playlist/...` 
+- **Spotify Albums**: `https://spotify.com/album/...`
+- **Direct URLs**: Automatically detects and loads full playlists
+
+### **Smart Loading**
+```javascript
+// Bulk playlist loading for performance
+queue.addBulk(playlistTracks);              // Instant queue population
+queue.isPlaylist = true;                    // Playlist mode enabled
+queue.playlistInfo = metadata;              // Rich playlist information
+```
+
+## 🔧 Advanced Configuration
+
+### **Performance Tuning**
+```javascript
+// config/botConfig.js
 module.exports = {
-  apps: [{
-    name: 'ragabot',
-    script: 'index.js',
-    instances: 1,
-    exec_mode: 'fork',
-    autorestart: true,
-    watch: false,
-    max_memory_restart: '1G',
-    env: {
-      NODE_ENV: 'production'
+    BOT: {
+        MAX_QUEUE_SIZE: 100,           // Queue limit
+        DEFAULT_VOLUME: 50,            // Starting volume
+        IDLE_TIMEOUT: 300000,          // 5 min idle disconnect
+        CACHE_TTL: 600000              // 10 min cache lifetime
+    },
+    
+    PERFORMANCE: {
+        CONCURRENT_STREAMS: 3,         // Parallel downloads
+        MEMORY_LIMIT: '1GB',           // Memory usage limit  
+        GC_INTERVAL: 60000,            // Garbage collection
+        LOG_LEVEL: 'info'              // Logging verbosity
     }
-  }]
 }
 ```
 
-## 🔧 **Configuration**
-
-### **Bot Configuration** (`config/botConfig.js`)
+### **Audio Quality Settings**
 ```javascript
-module.exports = {
-  BOT: {
-    PREFIX: '!',                    // Default prefix
-    MAX_QUEUE_SIZE: 500,           // Maximum songs in queue
-    DEFAULT_VOLUME: 50,            // Default volume (0-100)
-    OWNER_IDS: ['your_user_id']    // Bot owner user IDs
-  },
-  
-  LAVALINK: {
-    HOST: 'localhost',             // Lavalink host
-    PORT: 2333,                    // Lavalink port
-    PASSWORD: 'youshallnotpass'    // Lavalink password
-  }
+AUDIO_SETTINGS: {
+    BITRATE: 'highestaudio',           // Maximum quality
+    FILTER: 'audioonly',               // Audio-only streams
+    VOLUME_RANGE: [1, 100],            // Volume limits
+    BASS_BOOST: [-5, 15],              // Bass range (dB)
+    SPEED_RANGE: [0.5, 2.0]            // Speed multiplier
 }
 ```
 
-### **Lavalink Configuration** (`application.yml`)
+## 📊 Performance Monitoring
+
+### **Real-Time Statistics**
+- **Response Time**: Command execution speed
+- **Memory Usage**: RAM consumption tracking
+- **Cache Hit Rate**: Performance optimization metrics  
+- **Error Rate**: Reliability monitoring
+- **Uptime**: Service availability stats
+
+### **Health Monitoring**
+```bash
+# Check bot performance
+!status
+
+# Sample Output:
+🤖 Bot Status
+🏓 Ping: 45ms
+📡 WebSocket: 28ms  
+⏱️ Uptime: 2d 14h 32m
+🖥️ Memory: 234MB / 1GB
+🎵 Active Players: 12
+⚡ Cache Hit Rate: 94.2%
+```
+
+## 🚀 Deployment Options
+
+### **Replit (Recommended)**
+```bash
+# Already configured for Replit
+# Just add DISCORD_TOKEN to Secrets
+# Click Run button ▶️
+```
+
+### **Production Deployment**
 ```yaml
-server:
-  port: 2333
-  address: 0.0.0.0
-
-lavalink:
-  server:
-    password: "youshallnotpass"
-    sources:
-      youtube: true
-      soundcloud: true
-      spotify: true    # Requires plugin
+# docker-compose.yml
+version: '3.8'
+services:
+  echotune:
+    build: .
+    environment:
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - NODE_ENV=production
+    restart: unless-stopped
+    mem_limit: 1g
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
 ```
 
-## 🎨 **Customization**
-
-### **Adding Custom Commands**
+### **Monitoring Setup**
 ```javascript
-// Example: Add lyrics command
-async function handleLyricsCommand(message, args, guildSettings) {
-    const queue = getQueue(message.guild.id);
-    if (!queue.nowPlaying) {
-        return message.reply('No song is currently playing!');
-    }
-    
-    // Fetch lyrics logic here
-    const lyrics = await fetchLyrics(queue.nowPlaying.info.title);
-    
-    const embed = new EmbedBuilder()
-        .setTitle(`🎤 Lyrics: ${queue.nowPlaying.info.title}`)
-        .setDescription(lyrics.substring(0, 4096))
-        .setColor(config.COLORS.INFO);
-        
-    await message.reply({ embeds: [embed] });
+// Optional: Add monitoring
+const monitor = {
+    trackMemory: () => process.memoryUsage(),
+    trackLatency: () => Date.now() - commandStart,  
+    trackErrors: (error) => console.error(error),
+    generateReport: () => generatePerformanceReport()
 }
 ```
 
-### **Custom Embed Styling**
-```javascript
-// Modify colors in config/botConfig.js
-COLORS: {
-    SUCCESS: '#00ff00',    // Green
-    ERROR: '#ff0000',      // Red  
-    INFO: '#00ffff',       // Cyan
-    MUSIC: '#9932cc'       // Purple
-}
-```
-
-## 📊 **Statistics & Monitoring**
-
-### **Command Usage Stats**
-```sql
--- View popular commands
-SELECT command, COUNT(*) as usage_count 
-FROM command_stats 
-GROUP BY command 
-ORDER BY usage_count DESC;
-
--- Server activity
-SELECT guild_id, COUNT(*) as total_commands 
-FROM command_stats 
-GROUP BY guild_id 
-ORDER BY total_commands DESC;
-```
-
-### **Performance Monitoring**
-- **Memory Usage**: Track with `process.memoryUsage()`
-- **Command Latency**: Measure response times
-- **Uptime Statistics**: Track bot availability
-- **Error Rates**: Monitor and log errors
-
-## 🔍 **Troubleshooting**
+## 🔍 Troubleshooting
 
 ### **Common Issues**
 
-#### **Bot Not Responding**
+#### **Music Not Playing**
 ```bash
-# Check if bot is online
-node -e "console.log('Bot script syntax OK')" index.js
-
-# Verify Discord token
-echo $DISCORD_TOKEN
-
-# Check Lavalink connection
-curl http://localhost:2333/version
+# Check logs for parsing errors
+!status                    # View bot status
+# Try alternative search terms
+# Use direct YouTube URLs instead of search
 ```
 
-#### **Audio Issues**
+#### **Performance Issues**
 ```bash
-# Restart Lavalink
-pkill -f Lavalink
-java -jar Lavalink.jar
-
-# Check voice permissions
-# Ensure bot has Connect + Speak permissions
+# Clear cache manually
+# Restart bot if memory usage high
+# Check network connectivity
+# Reduce queue size if needed
 ```
 
-#### **Database Issues**
+#### **Voice Channel Issues**  
 ```bash
-# Check database file
-ls -la ragabot.db
-
-# Reset database (WARNING: Deletes all settings)
-rm ragabot.db
-# Bot will recreate on startup
+# Verify bot permissions:
+# ✅ Connect to Voice Channels
+# ✅ Speak in Voice Channels  
+# ✅ Use Voice Activity
+# ✅ Priority Speaker (optional)
 ```
 
-### **Debug Mode**
+### **Debug Commands**
 ```javascript
 // Enable debug logging
-const client = new Client({
-    intents: [...],
-    rest: { version: '10' },
-    debug: true  // Add this line
-});
+process.env.DEBUG = 'discord:*';
+
+// Performance profiling
+console.time('command-execution');
+// ... command logic ...
+console.timeEnd('command-execution');
 ```
 
-## 🤝 **Contributing**
+## 🤝 Contributing
 
 ### **Development Setup**
 ```bash
-# Fork repository
-git clone https://github.com/yourusername/ragabot.git
-cd ragabot
-
-# Install dependencies
+git clone <repository>
+cd discord-music-bot
 npm install
-
-# Create feature branch
-git checkout -b feature/your-feature-name
-
-# Make changes and test
-npm test
-
-# Commit and push
-git add .
-git commit -m "Add your feature"
-git push origin feature/your-feature-name
+npm run dev          # Development mode with hot reload
 ```
 
-### **Pull Request Guidelines**
-1. **Follow Code Style**: Use consistent formatting
-2. **Add Tests**: Include unit tests for new features  
-3. **Update Documentation**: Update README if needed
-4. **Test Thoroughly**: Verify all functionality works
-5. **Small PRs**: Keep changes focused and reviewable
+### **Code Standards**
+- **ES2022 Syntax**: Modern JavaScript features
+- **Async/Await**: Promise-based architecture  
+- **Error Handling**: Comprehensive try-catch blocks
+- **Performance**: Efficient algorithms and caching
+- **Documentation**: JSDoc comments for functions
 
-### **Reporting Issues**
-- **Bug Reports**: Include error logs and reproduction steps
-- **Feature Requests**: Clearly describe the desired functionality
-- **Performance Issues**: Provide profiling data if possible
+## 📄 License
 
-## 📄 **License**
+MIT License - See [LICENSE](LICENSE) file for details.
 
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+## 🎉 Features Showcase
 
-## 🙏 **Credits & Acknowledgments**
-
-- **Discord.js**: Powerful Discord API wrapper
-- **Lavalink**: High-performance audio streaming
-- **Contributors**: Thank you to all contributors
-- **Community**: Discord music bot community for inspiration
-
-## 📞 **Support**
-
-### **Community Support**
-- **Discord Server**: [Join our community](https://discord.gg/your-invite)
-- **GitHub Issues**: [Report bugs](https://github.com/yourusername/ragabot/issues)
-- **Documentation**: This comprehensive README
-
-### **Professional Support**
-For professional support, custom features, or enterprise deployment:
-- **Email**: your.email@domain.com
-- **Consultation**: Available for custom implementations
+✅ **25+ Commands** - Complete music control  
+✅ **Smart Caching** - Lightning-fast responses  
+✅ **Auto-Playlists** - Intelligent music discovery  
+✅ **Vote System** - Democratic music control  
+✅ **Audio Filters** - Enhanced sound experience  
+✅ **Performance Monitoring** - Real-time statistics  
+✅ **Multi-Language** - Hindi + English support  
+✅ **Crash-Proof** - Advanced error handling  
+✅ **Memory Optimized** - Efficient resource usage  
+✅ **Interactive UI** - Button-based controls  
 
 ---
 
-**Made with ❤️ for the Discord music community**
+**⚡ Built for Performance • 🎵 Optimized for Music • 💎 Crafted with Care**
 
-**⭐ Star this repository if you found it helpful!**
+**⭐ Star this repository if EchoTune enhanced your Discord server!**

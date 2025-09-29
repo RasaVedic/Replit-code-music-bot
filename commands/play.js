@@ -1,7 +1,15 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { joinVoiceChannel } = require('@discordjs/voice');
-const ytdl = require('@distube/ytdl-core');
+const play = require('play-dl'); // Using play-dl instead of direct ytdl-core
 const YouTube = require('youtube-sr').default;
+
+if (!process.env.YT_API_KEY) {
+    console.warn('⚠️ YT_API_KEY ENV variable not set! Rate limits may occur.');
+} else {
+    play.setToken({
+        youtube: { api_key: process.env.YT_API_KEY }
+    });
+}
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -17,59 +25,44 @@ module.exports = {
         await interaction.deferReply();
 
         const member = interaction.member;
-        if (!member) {
-            return interaction.editReply('❌ Member information not available. Please try again.');
-        }
-        
+        if (!member) return interaction.editReply('❌ Member information not available. Please try again.');
+
         const voiceChannel = member.voice?.channel;
         const query = interaction.options.getString('query');
 
-        if (!voiceChannel) {
-            return interaction.editReply('❌ आपको पहले किसी voice channel में join करना होगा!');
-        }
+        if (!voiceChannel) return interaction.editReply('❌ आपको पहले किसी voice channel में join करना होगा!');
 
         try {
             let videoUrl, title, duration, thumbnail;
-
-            // Always use search for more reliable results (bypasses bot detection)
             let searchResults;
-            
-            if (ytdl.validateURL(query)) {
-                // If it's a URL, extract video ID and search by title for reliability
-                try {
-                    const videoId = ytdl.getVideoID(query);
-                    searchResults = await YouTube.search(`site:youtube.com watch?v=${videoId}`, { limit: 1 });
-                    
-                    // If search fails, try direct URL as fallback
+
+            try {
+                if (play.yt_validate(query) === 'video') {
+                    // URL case
+                    const info = await play.video_info(query);
+                    videoUrl = info.url;
+                    title = info.title;
+                    duration = info.durationInSec;
+                    thumbnail = info.thumbnails[0]?.url;
+                } else {
+                    // Search case
+                    searchResults = await play.search(query, { limit: 1 });
                     if (!searchResults || searchResults.length === 0) {
-                        const info = await ytdl.getInfo(query, {
-                            requestOptions: {
-                                headers: {
-                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                                }
-                            }
-                        });
-                        videoUrl = query;
-                        title = info.videoDetails.title;
-                        duration = parseInt(info.videoDetails.lengthSeconds);
-                        thumbnail = info.videoDetails.thumbnails[0]?.url;
-                    } else {
-                        const video = searchResults[0];
-                        videoUrl = video.url;
-                        title = video.title;
-                        duration = video.durationInSec || 0;
-                        thumbnail = video.thumbnail?.url;
+                        return interaction.editReply('❌ कोई गाना नहीं मिला! दूसरा नाम try करें।');
                     }
-                } catch (urlError) {
-                    return interaction.editReply('❌ Invalid YouTube URL या server issue! गाने का नाम try करें।');
+                    const video = searchResults[0];
+                    videoUrl = video.url;
+                    title = video.title;
+                    duration = video.durationInSec;
+                    thumbnail = video.thumbnails[0]?.url;
                 }
-            } else {
-                // It's a search query
+            } catch (err) {
+                console.warn('⚠️ play-dl error:', err);
+                // Fallback to youtube-sr
                 searchResults = await YouTube.search(query, { limit: 1 });
                 if (!searchResults || searchResults.length === 0) {
                     return interaction.editReply('❌ कोई गाना नहीं मिला! दूसरा नाम try करें।');
                 }
-                
                 const video = searchResults[0];
                 videoUrl = video.url;
                 title = video.title;
@@ -85,7 +78,7 @@ module.exports = {
                 requestedBy: interaction.user,
             };
 
-            // Join voice channel if not already connected
+            // Join voice channel
             let connection;
             try {
                 connection = joinVoiceChannel({
@@ -93,23 +86,19 @@ module.exports = {
                     guildId: interaction.guild.id,
                     adapterCreator: interaction.guild.voiceAdapterCreator,
                 });
-            } catch (error) {
+            } catch (err) {
                 console.log('Already connected or connection exists');
             }
 
             const queue = global.getQueue(interaction.guild.id);
             const player = global.createGuildAudioPlayer(interaction.guild.id);
-            
-            if (connection) {
-                connection.subscribe(player);
-            }
+
+            if (connection) connection.subscribe(player);
 
             if (queue.nowPlaying) {
-                // Add to queue
                 queue.add(song);
                 return interaction.editReply(`📋 **${title}** को queue में add कर दिया! Position: ${queue.songs.length}`);
             } else {
-                // Play immediately
                 queue.add(song);
                 global.playNext(interaction.guild.id);
                 return interaction.editReply(`🎵 अब play हो रहा है: **${title}**`);
